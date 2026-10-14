@@ -1,0 +1,35 @@
+name: Publish
+
+# Publishes to npm (with provenance) when a GitHub Release is published.
+# Requires a repository secret named NPM_TOKEN: an npm automation token for an account that
+# may publish `agent-loopguard`. Add it under Settings > Secrets and variables > Actions.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # lets npm attach a provenance statement to the package
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
