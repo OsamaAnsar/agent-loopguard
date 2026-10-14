@@ -1,6 +1,6 @@
 {
   "name": "@osama.ansar/agent-loopguard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Framework-agnostic loop and budget guard for AI agents: detects repeated tool calls, oscillation, no-progress text, unfamiliar finish reasons and budget overruns, and tells you why to stop.",
   "keywords": [
     "ai",
