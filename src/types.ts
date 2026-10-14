@@ -117,6 +117,8 @@ export interface OscillationEvidence {
   threshold: number;
   /** One cycle, as `tool(args)` labels. */
   cycle: string[];
+  /** The tool name of each call in the cycle (no arguments), in the same order as `cycle`. */
+  tools: string[];
 }
 
 export interface NoProgressEvidence {
@@ -152,6 +154,13 @@ interface StopBase<R extends StopReason, C extends string, E> {
   detail: string;
   /** Structured, JSON-serialisable facts behind the decision. */
   evidence: E;
+  /**
+   * Plain-English text meant to be pasted into the model's next turn or tool result, present on
+   * every stop that is a fault (see `isFault`). It names the tool but never repeats arguments or
+   * results, so it is safe to send to the model. Absent on a normal `stop` finish and, for a
+   * `custom` stop, unless the detector (or `options.feedback`) supplies it. See `feedbackFor`.
+   */
+  feedback?: string;
   /** Non-fatal warnings raised in the same step, if any. */
   warnings?: GuardWarning[];
 }
@@ -272,6 +281,8 @@ export interface CustomStop {
   detail?: string;
   /** Anything JSON-serialisable that explains the decision. */
   evidence?: unknown;
+  /** Text for the model, becomes `verdict.feedback`. Default: none. Must not contain secrets. */
+  feedback?: string;
 }
 
 /**
@@ -310,6 +321,9 @@ export interface ToolPolicy {
   ignore?: boolean;
 }
 
+/** Where a piece of feedback is going: after a step was recorded, or in place of a call that was not run. */
+export type FeedbackPhase = 'check' | 'preflight';
+
 export interface GuardOptions {
   /** Stop after this many steps. Integer >= 1. Default 50. `false` disables. */
   maxSteps?: number | false;
@@ -327,6 +341,12 @@ export interface GuardOptions {
   tools?: Readonly<Record<string, ToolPolicy>>;
   /** Extra detectors, run after the built-in ones. */
   custom?: CustomDetector | readonly CustomDetector[];
+  /**
+   * Replace the model-facing text of a fault verdict (and of a `preflight` denial). Return a string
+   * to use it, or `undefined` to keep the default (`feedbackFor`). Errors it throws propagate out of
+   * `guard.check` / `guard.preflight`. The text is yours to keep free of secrets.
+   */
+  feedback?: (verdict: StopVerdict, info: { phase: FeedbackPhase }) => string | undefined;
   /** Clock used for wall-clock duration budgets. Default `Date.now`. */
   now?: () => number;
 }

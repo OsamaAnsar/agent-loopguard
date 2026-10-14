@@ -6,6 +6,8 @@ import { OscillationDetector } from './detectors/oscillation';
 import { RepeatedToolCallDetector } from './detectors/repeatedToolCall';
 import { ToolLimitDetector } from './detectors/toolLimit';
 import type { Detector, DetectorContext, DetectorResult } from './detectors/types';
+import { isFault } from './explain';
+import { feedbackFor } from './feedback';
 import { buildRecord } from './record';
 import type { StepRecord } from './record';
 import { ToolPolicies } from './toolPolicy';
@@ -38,6 +40,7 @@ class CustomRunner implements Detector {
       detail: typeof out.detail === 'string' ? out.detail : 'Stopped by a custom detector.',
       evidence: out.evidence === undefined ? null : out.evidence,
     };
+    if (typeof out.feedback === 'string' && out.feedback !== '') stop.feedback = out.feedback;
     return { stop };
   }
 
@@ -99,6 +102,14 @@ export function createGuard(options: GuardOptions = {}): Guard {
   let failedToolCalls = 0;
   let lastVerdict: Verdict | null = null;
 
+  /** Add the model-facing text to a fault verdict: the `feedback` option's answer, else the default. */
+  function withFeedback(stop: StopVerdict): StopVerdict {
+    if (!isFault(stop)) return stop;
+    const custom = options.feedback?.(stop, { phase: 'check' });
+    const text = typeof custom === 'string' ? custom : feedbackFor(stop, 'check');
+    return text === undefined ? stop : { ...stop, feedback: text };
+  }
+
   function check(step: GuardStep): Verdict {
     // Steps often come straight from provider responses; tolerate non-objects.
     const safe: GuardStep = typeof step === 'object' && step !== null ? step : {};
@@ -127,7 +138,10 @@ export function createGuard(options: GuardOptions = {}): Guard {
     }
 
     let verdict: Verdict;
-    if (stop !== undefined) verdict = warnings.length > 0 ? { ...stop, warnings } : stop;
+    if (stop !== undefined) {
+      const full = withFeedback(stop);
+      verdict = warnings.length > 0 ? { ...full, warnings } : full;
+    }
     else verdict = warnings.length > 0 ? { stop: false, warnings } : { stop: false };
     lastVerdict = verdict;
     return verdict;

@@ -1,5 +1,6 @@
 export { createGuard, DEFAULT_MAX_STEPS } from './guard';
 export { explain, isFault } from './explain';
+export { feedbackFor } from './feedback';
 export { canonicalize, stableHash } from './canonical';
 export { toStopWhen, toGuardStep } from './adapters/aiSdk';
 export type { AiSdkStepLike, AiSdkToolCallLike, AiSdkToolResultLike, ToStopWhenOptions } from './adapters/aiSdk';
@@ -18,6 +19,7 @@ export type {
   CustomDetector,
   CustomStop,
   CustomVerdict,
+  FeedbackPhase,
   FinishReasonEvidence,
   FinishReasonOptions,
   FinishReasonVerdict,

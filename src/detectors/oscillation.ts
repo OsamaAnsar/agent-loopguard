@@ -21,6 +21,7 @@ export class OscillationDetector implements Detector {
 
   private sigs: string[] = [];
   private labels: string[] = [];
+  private names: string[] = [];
   /** `matches[p - 2]`: trailing calls equal to the call `p` positions earlier. */
   private matches: number[];
   private current: { period: number; repeats: number } | null = null;
@@ -35,7 +36,7 @@ export class OscillationDetector implements Detector {
     let found: OscillationEvidence | undefined;
 
     for (const call of record.calls) {
-      this.push(call.callSig, call.label);
+      this.push(call.callSig, call.label, call.name);
       // Check after every call (not just at the end of the step) so a pattern that completes
       // mid-step is not lost if a later call in the same step breaks it.
       found = this.detect() ?? found;
@@ -55,7 +56,7 @@ export class OscillationDetector implements Detector {
     };
   }
 
-  private push(sig: string, label: string): void {
+  private push(sig: string, label: string, name: string): void {
     const n = this.sigs.length;
     for (let period = 2; period <= this.maxPeriod; period += 1) {
       const slot = period - 2;
@@ -64,9 +65,11 @@ export class OscillationDetector implements Detector {
     }
     this.sigs.push(sig);
     this.labels.push(label);
+    this.names.push(name);
     if (n >= this.maxPeriod) {
       this.sigs.shift();
       this.labels.shift();
+      this.names.shift();
     }
   }
 
@@ -87,6 +90,7 @@ export class OscillationDetector implements Detector {
         repeats: cycles,
         threshold: this.repeats,
         cycle: this.labels.slice(n - period),
+        tools: this.names.slice(n - period),
       };
     }
     return undefined;
@@ -99,6 +103,7 @@ export class OscillationDetector implements Detector {
   reset(): void {
     this.sigs = [];
     this.labels = [];
+    this.names = [];
     this.matches.fill(0);
     this.current = null;
   }
