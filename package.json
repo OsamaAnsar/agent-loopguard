@@ -66,6 +66,7 @@
     "test:coverage": "vitest run --coverage",
     "example:loop": "tsx examples/looping-agent.ts",
     "example:ai-sdk": "tsx examples/ai-sdk-stop-when.ts",
+    "example:preflight": "tsx examples/preflight-and-feedback.ts",
     "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "devDependencies": {

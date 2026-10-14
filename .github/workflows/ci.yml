@@ -44,3 +44,6 @@ jobs:
 
       - name: Run the offline example
         run: npm run example:loop
+
+      - name: Run the preflight and feedback example
+        run: npm run example:preflight
