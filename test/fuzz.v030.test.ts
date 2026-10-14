@@ -32,6 +32,25 @@ const CONFIGS: Array<[string, () => GuardOptions]> = [
   ],
   ['warnings explicitly off', () => ({ warnings: false, repeatedToolCall: { window: { size: 5, maxRepeats: 2 } }, oscillation: { warnAt: 2, repeats: 3 } })],
   ['a hook that records and one that throws', () => ({ onDecision: (e) => { if (e.phase === 'check' && e.verdict.stop) throw new Error('hook'); } })],
+  [
+    'signature functions that throw, return junk, or are fine',
+    () => {
+      let n = 0;
+      return {
+        repeatedToolCall: { window: { size: 6, maxRepeats: 2 }, requireIdenticalResults: true },
+        signature: (tool: string, args: unknown) => {
+          n += 1;
+          if (n % 5 === 0) throw new Error('boom');
+          if (n % 7 === 0) return 12 as unknown as string;
+          return `${tool}/${typeof args}`;
+        },
+        resultSignature: (r: unknown) => (n % 3 === 0 ? (undefined as unknown as string) : typeof r),
+        errorSignature: () => {
+          throw Object.create(null) as unknown;
+        },
+      };
+    },
+  ],
   ['the largest window', () => ({ maxSteps: false, repeatedToolCall: { window: { size: 1000, maxRepeats: 4 } } })],
 ];
 

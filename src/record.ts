@@ -1,4 +1,6 @@
 import { describe, hashString } from './canonical';
+import { DEFAULT_SIGNER } from './signatures';
+import type { Signer } from './signatures';
 
 /** One tool call, reduced to the comparable facts the detectors need. */
 export interface CallRecord {
@@ -72,19 +74,19 @@ function isArray(value: unknown): value is unknown[] {
   }
 }
 
-function buildCall(raw: unknown): CallRecord | undefined {
+function buildCall(raw: unknown, signer: Signer): CallRecord | undefined {
   if (!isObject(raw)) return undefined;
   const rawName = get(raw, 'name');
   const name = typeof rawName === 'string' ? rawName : describe(rawName).signature;
-  const args = describe(get(raw, 'args'));
+  const args = signer.args(name, get(raw, 'args'));
   const error = get(raw, 'error');
   const result = get(raw, 'result');
   const failed = error !== undefined && error !== null;
   const callSig = hashString(`${JSON.stringify(name)}(${args.signature})`);
 
   let resultSig: string | undefined;
-  if (failed) resultSig = hashString(`error:${describe(error).signature}`);
-  else if (result !== undefined) resultSig = hashString(`ok:${describe(result).signature}`);
+  if (failed) resultSig = hashString(`error:${signer.error(error)}`);
+  else if (result !== undefined) resultSig = hashString(`ok:${signer.result(result)}`);
 
   return {
     name,
@@ -98,13 +100,13 @@ function buildCall(raw: unknown): CallRecord | undefined {
   };
 }
 
-function buildCalls(step: Record<string, unknown>): CallRecord[] {
+function buildCalls(step: Record<string, unknown>, signer: Signer): CallRecord[] {
   const calls: CallRecord[] = [];
   try {
     const raw = get(step, 'toolCalls');
     if (!isArray(raw)) return calls;
     for (const item of raw) {
-      const call = buildCall(item);
+      const call = buildCall(item, signer);
       if (call !== undefined) calls.push(call);
     }
   } catch {
@@ -118,13 +120,13 @@ function buildCalls(step: Record<string, unknown>): CallRecord[] {
  * calls of one step). Only `name` and `args` are read: whatever else the objects carry (a
  * `result`, an `error`) is ignored, because nothing has happened yet. Unusable items are skipped.
  */
-export function buildPendingCalls(input: unknown): CallRecord[] {
+export function buildPendingCalls(input: unknown, signer: Signer = DEFAULT_SIGNER): CallRecord[] {
   const raw: unknown[] = isArray(input) ? input : [input];
   const calls: CallRecord[] = [];
   try {
     for (const item of raw) {
       if (!isObject(item)) continue;
-      const call = buildCall({ name: get(item, 'name'), args: get(item, 'args') });
+      const call = buildCall({ name: get(item, 'name'), args: get(item, 'args') }, signer);
       if (call !== undefined) calls.push(call);
     }
   } catch {
@@ -138,7 +140,7 @@ export function buildPendingCalls(input: unknown): CallRecord[] {
  * responses, so every field is type-checked at runtime and unusable data (including getters
  * that throw and revoked proxies) is ignored, never thrown on.
  */
-export function buildRecord(step: unknown, index: number): StepRecord {
+export function buildRecord(step: unknown, index: number, signer: Signer = DEFAULT_SIGNER): StepRecord {
   const s: Record<string, unknown> = isObject(step) ? step : {};
 
   const rawUsage = get(s, 'usage');
@@ -157,7 +159,7 @@ export function buildRecord(step: unknown, index: number): StepRecord {
 
   return {
     index,
-    calls: buildCalls(s),
+    calls: buildCalls(s, signer),
     text: typeof rawText === 'string' ? normalizeText(rawText) : '',
     finishReason,
     rawFinishReason: typeof rawFinish === 'string' && finishReason !== undefined ? rawFinish : undefined,

@@ -478,6 +478,20 @@ export interface GuardOptions {
    * function is not part of the snapshot fingerprint.
    */
   onDecision?: (event: DecisionEvent) => void;
+  /**
+   * Describe a call for the repeat, oscillation and no-progress rules yourself: return a string made of
+   * the fields that decide whether two calls are "the same" (leave out a timestamp, a request id or a
+   * page token). The tool name is always part of the comparison, so describe the arguments. The string
+   * is hashed like the default canonical form; a call is also previewed (80 characters) from it in
+   * evidence and snapshots. If it throws or returns something that is not a string, that call falls
+   * back to the default canonical form and `summary().signatures.failures` counts it. Pass the same
+   * function when you restore a snapshot: only whether it is set is checked.
+   */
+  signature?: (toolName: string, args: unknown) => string;
+  /** Same, for a result: what makes two results "the same" for `requireIdenticalResults`, `polling` and no-progress. */
+  resultSignature?: (result: unknown) => string;
+  /** Same, for an error a tool raised. */
+  errorSignature?: (error: unknown) => string;
 }
 
 /** What `onDecision` is told: the verdict of a `check`, or the answer to a `preflight`. */
@@ -523,6 +537,8 @@ export interface GuardSummary {
   };
   /** The verdict returned by the most recent `check`, or `null` before the first one. */
   lastVerdict: Verdict | null;
+  /** Present only when a signature function is set: how often one threw or returned a non-string (and fell back to the default). */
+  signatures?: { failures: number; lastFailure: string | null };
 }
 
 // ---------------------------------------------------------------------------
@@ -600,6 +616,8 @@ export interface GuardOptionsFingerprint {
   tools: string;
   /** Covers the number of custom detectors, not what they do. */
   custom: string;
+  /** Which signature functions are set (not what they do). Present only when at least one is, so snapshots without are as they were in 0.2.0. */
+  signatures?: string;
 }
 
 /** The run of identical calls that `repeatedToolCall` is currently counting. */

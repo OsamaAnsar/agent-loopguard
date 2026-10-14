@@ -81,6 +81,17 @@ const CONFIGS: Config[] = [
     }),
   },
   {
+    name: 'custom signature functions (pure), with a window, polling and the no-progress rule',
+    options: () => ({
+      repeatedToolCall: { window: { size: 8, maxRepeats: 3 }, requireIdenticalResults: true },
+      noProgress: { threshold: 3 },
+      tools: { poll: { polling: true } },
+      signature: (tool, args) => `${tool}:${typeof args === 'object' && args !== null ? JSON.stringify(Object.keys(args).sort()) : String(args)}`,
+      resultSignature: (result) => (typeof result === 'string' ? result.toUpperCase() : typeof result),
+      errorSignature: () => 'any error',
+    }),
+  },
+  {
     name: 'the largest window',
     options: () => ({ maxSteps: false, repeatedToolCall: { window: { size: 1000, maxRepeats: 6 } } }),
   },

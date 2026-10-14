@@ -12,6 +12,7 @@ import { buildPendingCalls, buildRecord } from './record';
 import { buildReport, lastStopOf, renderReport } from './report';
 import type { StepRecord } from './record';
 import { SNAPSHOT_VERSION, asAmount, asInt, asNullable, asRecord, asString, fail, field, fingerprint, section } from './snapshot';
+import { Signer } from './signatures';
 import { ToolTally } from './tally';
 import { ToolPolicies } from './toolPolicy';
 import type {
@@ -87,6 +88,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
     throw new TypeError(`agent-loopguard: onDecision must be a function, got ${String(options.onDecision)}`);
   }
   const onDecision = options.onDecision;
+  const signer = new Signer({ signature: options.signature, resultSignature: options.resultSignature, errorSignature: options.errorSignature });
 
   const policies = new ToolPolicies(options.tools);
   const maxSteps = options.maxSteps === false ? undefined : new MaxStepsDetector(options.maxSteps ?? DEFAULT_MAX_STEPS);
@@ -170,7 +172,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
     notRunning('check');
     // Steps often come straight from provider responses; tolerate non-objects.
     const safe: GuardStep = typeof step === 'object' && step !== null ? step : {};
-    const record = buildRecord(safe, stepCount);
+    const record = buildRecord(safe, stepCount, signer);
     stepCount += 1;
     history.push(safe);
 
@@ -219,7 +221,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
   }
 
   function decide(input: PreflightCall | readonly PreflightCall[]): Preflight {
-    const pending = buildPendingCalls(input);
+    const pending = buildPendingCalls(input, signer);
     const scoped = policies.hasIgnored ? pending.filter((c) => !policies.isIgnored(c.name)) : pending;
     const budgetNow = budget?.peek(totals);
 
@@ -252,6 +254,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
     lastVerdict = null;
     lastStop = null;
     tally.reset();
+    signer.reset();
     for (const { detector } of detectors) detector.reset();
   }
 
@@ -271,6 +274,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
         ...(toolLimit ? { toolLimits: toolLimit.state() } : {}),
       },
       lastVerdict,
+      ...(signer.custom ? { signatures: signer.state() } : {}),
     };
   }
 
@@ -300,6 +304,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
       budget: fingerprint(budget ? budget.config() : false),
       tools: fingerprint(policies.config()),
       custom: fingerprint(customFns.length),
+      ...(signer.custom ? { signatures: fingerprint(signer.flags()) } : {}),
     };
   }
 
@@ -356,9 +361,17 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
     const stored = asRecord(field(top, 'options', 'snapshot'), 'snapshot.options');
     const current = fingerprints();
     const relaxed: ReadonlyArray<keyof GuardOptionsFingerprint> = allowLimitChanges ? ['maxSteps', 'budget'] : [];
-    const changed = (Object.keys(current) as Array<keyof GuardOptionsFingerprint>).filter(
-      (key) => !relaxed.includes(key) && asString(field(stored, key, 'snapshot.options'), `snapshot.options.${key}`, 64) !== current[key],
+    const changed: string[] = (Object.keys(current) as Array<keyof GuardOptionsFingerprint>).filter(
+      (key) =>
+        key !== 'signatures' &&
+        !relaxed.includes(key) &&
+        asString(field(stored, key, 'snapshot.options'), `snapshot.options.${key}`, 64) !== current[key],
     );
+    // Which signature functions are set: absent on both sides unless the guard uses any (and always in 0.2.0).
+    const storedSignatures = Object.prototype.hasOwnProperty.call(stored, 'signatures')
+      ? asString(stored['signatures'], 'snapshot.options.signatures', 64)
+      : undefined;
+    if (storedSignatures !== current.signatures) changed.push('signatures');
     if (changed.length > 0) {
       throw new TypeError(
         `agent-loopguard: this snapshot was taken with different options (${changed.join(', ')}); restore it with the options it was taken with`,

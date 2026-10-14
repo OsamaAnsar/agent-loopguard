@@ -216,6 +216,27 @@ A warning is a non-blocking note on a verdict (`{ stop: false, warnings: [...] }
 - **Preflight.** `guard.preflight(call)` returns the warnings the call would carry (`{ allow: true, warnings }`), in the same order as `check`, except `NO_PROGRESS_WARNING`, which needs a finished step.
 - **Snapshots.** Warnings are derived from state that is already in the snapshot, and `warnAt` never changes a stop, so it is not part of the options fingerprint: a run may be restored with different warning settings.
 
+### Choose what counts as "the same call"
+
+```ts
+import { createGuard } from '@osama.ansar/agent-loopguard';
+
+const guard = createGuard({
+  // Compare calls by the fields that matter, not by the whole payload.
+  signature: (tool, args) => JSON.stringify({ q: (args as { q: string }).q }), // ignore `ts`, `requestId`, `pageToken`
+  resultSignature: (result) => (result as { status: string }).status,          // "pending" is "pending"
+  errorSignature: (error) => (error as { code?: string }).code ?? 'unknown',
+});
+```
+
+By default two calls are the same when their canonical forms are equal, so a call that carries a timestamp, a request id or a page token is never the same call twice. These functions let you pick the fields that decide it, and they also spare the guard from walking a huge payload.
+
+- **`signature(toolName, args)`** describes the arguments of a call; the tool name is always part of the comparison on top of it. **`resultSignature(result)`** and **`errorSignature(error)`** describe a result or an error; they matter wherever results are compared: `requireIdenticalResults`, `polling` tools, the window with those, and the no-progress rule. Each is optional and independent.
+- **What is done with the string.** It is hashed like a canonical form, so any length is fine. The call's preview in evidence, labels and snapshots is the first 80 characters of your string, and the arguments themselves are not read at all, so nothing else about them reaches the guard's state.
+- **When your function fails.** If it throws, or returns anything that is not a string, `check` and `preflight` do not throw: that one value falls back to the default canonical form, and the failure is counted in `summary().signatures` (`{ failures, lastFailure }`, present only when a function is set; `lastFailure` is the message, cut at 200 characters, and `reset()` clears the count). A call that fell back does not match a call that did not. The alternative, treating a failure as a distinct signature, would silently switch detection off for every call a buggy function fails on; the fallback keeps detection working at its 0.2.0 strength. Passing something that is not a function throws a `TypeError` from `createGuard`; what a function returns can only be checked when it runs, which is why a bad return is counted rather than thrown.
+- **Snapshots.** Functions cannot be saved, and a snapshot cannot tell whether you pass the same one on restore, exactly as with `custom` detectors and `feedback`. What it does record is which of the three are set, as a `signatures` entry in the options fingerprint (present only when at least one is set, so snapshots without them are as they were): restoring without a function the snapshot was taken with, with one it was not, or with a different set, throws a `TypeError` naming `signatures`. A snapshot taken before you added a function (including any from 0.2.0) is refused when you turn one on, because the hashes in it were made with the default form. Pass the same functions when you restore.
+- **Not covered.** Your functions run synchronously inside `check`/`preflight`, on every call; keep them cheap and deterministic. A function with side effects, or one whose answer changes over time, will make verdicts differ between a run and its replay (`toStopWhen` replays all steps on every call).
+
 ### Check a call before it runs
 
 ```ts
@@ -339,7 +360,7 @@ The restored guard goes on exactly where the original stopped: given the same st
 
 - **What a snapshot holds.** Version number, step and call counters, calls per tool (for `report()`; see above), running totals, the wall-clock time used so far (only when there is a duration budget), tool names, hashes of recent calls and outcomes, and a few previews of at most 80 characters of recent arguments and text, kept so that evidence and messages read the same after a restore. **What it does not hold:** raw arguments, results, errors, model text, the step history, the options, the last verdict. Hashes are not cryptographic; a short, guessable value could be recovered by hashing candidates, so treat a snapshot as run data, not as public. `guard.snapshot({ redact: true })` replaces the previews with `[redacted]`: stop decisions stay the same, but evidence for calls made before the snapshot says `[redacted]`.
 - **Size.** Bounded by the options, not by the length of the run: the oscillation detector keeps `maxPeriod` calls, the no-progress detector the newest 1024 distinct outcomes (about 31 bytes each), the repeat detector one run, plus `window.size` call hashes (about 31 bytes each) when you set a window. Measured with default options: 831 bytes for a fresh guard, and 33,088 bytes after 1,500 or 6,000 steps that each had a new 2 KB argument, a 3 KB result and 500 characters of text (it stops growing once 1024 outcomes are remembered); raising `oscillation.maxPeriod` to 50 made it 39,292 bytes. Tool names over 256 characters are cut in the snapshot.
-- **Options are not stored; they are fingerprinted.** Functions cannot be saved, so you pass the options again. The snapshot records one fingerprint per group of options (`maxSteps`, `repeatedToolCall`, `oscillation`, `noProgress`, `finishReason`, `budget`, `tools`, and the number of `custom` detectors), and restoring under different options throws a `TypeError` that names the groups, instead of silently behaving differently. Not fingerprinted: `now`, `feedback`, `onDecision`, the warning settings (`warnings`, every `warnAt`) and what your custom detectors do. To give a run that hit its limit more room, pass `{ allowLimitChanges: true }` as the third argument: then `maxSteps` and `budget` may differ (and only those).
+- **Options are not stored; they are fingerprinted.** Functions cannot be saved, so you pass the options again. The snapshot records one fingerprint per group of options (`maxSteps`, `repeatedToolCall`, `oscillation`, `noProgress`, `finishReason`, `budget`, `tools`, the number of `custom` detectors, and which `signature` functions are set), and restoring under different options throws a `TypeError` that names the groups, instead of silently behaving differently. Not fingerprinted: `now`, `feedback`, `onDecision`, the warning settings (`warnings`, every `warnAt`) and what your custom detectors do. To give a run that hit its limit more room, pass `{ allowLimitChanges: true }` as the third argument: then `maxSteps` and `budget` may differ (and only those).
 - **History.** The raw steps are not in a snapshot, so a restored guard starts with an empty `history`, and custom detectors see only the steps recorded since the restore. `summary().steps` and the detectors keep counting across the restore. `summary().lastVerdict` is `null` until the first `check`.
 - **Wall-clock budgets.** The time used so far is stored as a duration, so the time between saving and restoring is not counted.
 - **Bad snapshots.** An unknown version, a wrong shape, an impossible number or a hostile object (throwing getter, revoked proxy, `__proto__` keys) throws a `TypeError` from `fromJSON`, never a crash later from `check`. Unknown extra keys are ignored.
@@ -410,6 +431,9 @@ interface GuardOptions {
   custom?: CustomDetector | readonly CustomDetector[];
   feedback?: (verdict: StopVerdict, info: { phase: 'check' | 'preflight' }) => string | undefined;
   now?: () => number;                                 // default Date.now
+  signature?: (toolName: string, args: unknown) => string;       // what makes two calls the same
+  resultSignature?: (result: unknown) => string;
+  errorSignature?: (error: unknown) => string;
   onDecision?: (event: { phase: 'check'; verdict: Verdict } | { phase: 'preflight'; verdict: Preflight }) => void;
 }
 

@@ -85,5 +85,8 @@ describe('compatibility: snapshots written by 0.2.0', () => {
     expect(() => restoreGuard(fixture.snapshot, { ...options, repeatedToolCall: { window: { size: 10, maxRepeats: 3 } } })).toThrow(
       /taken with different options \(repeatedToolCall\)/,
     );
+    expect(() => restoreGuard(fixture.snapshot, { ...options, signature: () => 'x' })).toThrow(/taken with different options \(signatures\)/);
+    // Settings that cannot change a decision are free to differ.
+    expect(() => restoreGuard(fixture.snapshot, { ...options, warnings: true, onDecision: () => undefined })).not.toThrow();
   });
 });
