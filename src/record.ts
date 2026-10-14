@@ -114,6 +114,26 @@ function buildCalls(step: Record<string, unknown>): CallRecord[] {
 }
 
 /**
+ * Reduce calls that have not run yet to records. Accepts one call or an array of them (the parallel
+ * calls of one step). Only `name` and `args` are read: whatever else the objects carry (a
+ * `result`, an `error`) is ignored, because nothing has happened yet. Unusable items are skipped.
+ */
+export function buildPendingCalls(input: unknown): CallRecord[] {
+  const raw: unknown[] = isArray(input) ? input : [input];
+  const calls: CallRecord[] = [];
+  try {
+    for (const item of raw) {
+      if (!isObject(item)) continue;
+      const call = buildCall({ name: get(item, 'name'), args: get(item, 'args') });
+      if (call !== undefined) calls.push(call);
+    }
+  } catch {
+    // A hostile iterable: keep whatever was read before it failed.
+  }
+  return calls;
+}
+
+/**
  * Reduce a step to a record. Defensive on purpose: steps often come straight from provider
  * responses, so every field is type-checked at runtime and unusable data (including getters
  * that throw and revoked proxies) is ignored, never thrown on.

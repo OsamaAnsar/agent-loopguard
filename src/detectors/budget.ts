@@ -1,6 +1,19 @@
-import type { BudgetEvidence, BudgetLimit, BudgetMetric, BudgetOptions, BudgetVerdict, GuardWarning } from '../types';
+import type {
+  BudgetEvidence,
+  BudgetLimit,
+  BudgetMetric,
+  BudgetOptions,
+  BudgetVerdict,
+  GuardTotals,
+  GuardWarning,
+} from '../types';
 import type { StepRecord } from '../record';
 import type { Detector, DetectorContext, DetectorResult } from './types';
+
+/** A `DetectorResult` whose stop, if any, is known to be a budget verdict. */
+interface BudgetResult extends DetectorResult {
+  stop?: BudgetVerdict;
+}
 
 interface ResolvedLimit {
   metric: BudgetMetric;
@@ -72,8 +85,20 @@ export class BudgetDetector implements Detector {
   observe(_record: StepRecord, ctx: DetectorContext): DetectorResult | undefined {
     // `recorded` is deterministic (summed from steps) and is what summary() shows;
     // `used` additionally folds in wall-clock time for the duration check.
-    const recorded = this.recorded(ctx);
+    const recorded = this.recorded(ctx.totals);
     this.lastUsed = recorded;
+    return this.evaluate(recorded);
+  }
+
+  /**
+   * Where the totals stand right now, without recording anything: the stop verdict if a limit has
+   * already been reached, and any warnings. Reads the clock when a duration limit exists.
+   */
+  peek(totals: Readonly<GuardTotals>): BudgetResult | undefined {
+    return this.evaluate(this.recorded(totals));
+  }
+
+  private evaluate(recorded: Record<BudgetMetric, number>): BudgetResult | undefined {
     const used = this.withWallClock(recorded);
 
     let stop: BudgetVerdict | undefined;
@@ -106,19 +131,19 @@ export class BudgetDetector implements Detector {
     }
 
     if (stop === undefined && warnings.length === 0) return undefined;
-    const result: DetectorResult = {};
+    const result: BudgetResult = {};
     if (stop !== undefined) result.stop = stop;
     if (warnings.length > 0) result.warnings = warnings;
     return result;
   }
 
-  private recorded(ctx: DetectorContext): Record<BudgetMetric, number> {
+  private recorded(totals: Readonly<GuardTotals>): Record<BudgetMetric, number> {
     return {
-      totalTokens: ctx.totals.totalTokens,
-      inputTokens: ctx.totals.inputTokens,
-      outputTokens: ctx.totals.outputTokens,
-      costUsd: ctx.totals.costUsd,
-      durationMs: ctx.totals.durationMs,
+      totalTokens: totals.totalTokens,
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
+      costUsd: totals.costUsd,
+      durationMs: totals.durationMs,
     };
   }
 

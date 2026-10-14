@@ -8,7 +8,7 @@ import { ToolLimitDetector } from './detectors/toolLimit';
 import type { Detector, DetectorContext, DetectorResult } from './detectors/types';
 import { isFault } from './explain';
 import { feedbackFor } from './feedback';
-import { buildRecord } from './record';
+import { buildPendingCalls, buildRecord } from './record';
 import type { StepRecord } from './record';
 import { ToolPolicies } from './toolPolicy';
 import type {
@@ -19,6 +19,9 @@ import type {
   GuardSummary,
   GuardTotals,
   GuardWarning,
+  Preflight,
+  PreflightCall,
+  PreflightStopVerdict,
   StopVerdict,
   Verdict,
 } from './types';
@@ -105,8 +108,8 @@ export function createGuard(options: GuardOptions = {}): Guard {
   /** Add the model-facing text to a fault verdict: the `feedback` option's answer, else the default. */
   function withFeedback(stop: StopVerdict): StopVerdict {
     if (!isFault(stop)) return stop;
-    const custom = options.feedback?.(stop, { phase: 'check' });
-    const text = typeof custom === 'string' ? custom : feedbackFor(stop, 'check');
+    const override = options.feedback?.(stop, { phase: 'check' });
+    const text = typeof override === 'string' ? override : feedbackFor(stop, 'check');
     return text === undefined ? stop : { ...stop, feedback: text };
   }
 
@@ -141,10 +144,34 @@ export function createGuard(options: GuardOptions = {}): Guard {
     if (stop !== undefined) {
       const full = withFeedback(stop);
       verdict = warnings.length > 0 ? { ...full, warnings } : full;
+    } else {
+      verdict = warnings.length > 0 ? { stop: false, warnings } : { stop: false };
     }
-    else verdict = warnings.length > 0 ? { stop: false, warnings } : { stop: false };
     lastVerdict = verdict;
     return verdict;
+  }
+
+  function preflight(input: PreflightCall | readonly PreflightCall[]): Preflight {
+    const pending = buildPendingCalls(input);
+    const scoped = policies.hasIgnored ? pending.filter((c) => !policies.isIgnored(c.name)) : pending;
+    const budgetNow = budget?.peek(totals);
+
+    // Same priority as `check`, minus the rules that need a finished step.
+    const found: PreflightStopVerdict | undefined =
+      budgetNow?.stop ??
+      maxSteps?.peek() ??
+      toolLimit?.peek(scoped) ??
+      repeated?.peek(scoped, history.length) ??
+      oscillation?.peek(scoped);
+
+    if (found === undefined) {
+      const warnings = budgetNow?.warnings;
+      return warnings === undefined ? { allow: true } : { allow: true, warnings };
+    }
+    const override = options.feedback?.(found, { phase: 'preflight' });
+    const feedback = typeof override === 'string' ? override : feedbackFor(found, 'preflight');
+    const { stop: _stop, feedback: _feedback, warnings: _warnings, ...rest } = found;
+    return { allow: false, ...rest, feedback };
   }
 
   function reset(): void {
@@ -177,6 +204,7 @@ export function createGuard(options: GuardOptions = {}): Guard {
 
   return {
     check,
+    preflight,
     reset,
     summary,
     get history(): readonly GuardStep[] {

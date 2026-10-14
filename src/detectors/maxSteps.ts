@@ -1,4 +1,5 @@
 import type { StepRecord } from '../record';
+import type { MaxStepsVerdict } from '../types';
 import type { Detector, DetectorResult } from './types';
 import { assertInteger } from './types';
 
@@ -22,6 +23,18 @@ export class MaxStepsDetector implements Detector {
         detail: `Reached the limit of ${this.limit} steps.`,
         evidence: { steps: this.steps, limit: this.limit },
       },
+    };
+  }
+
+  /** What a call made now would run into: the verdict if the limit has already been reached. */
+  peek(): MaxStepsVerdict | undefined {
+    if (this.steps < this.limit) return undefined;
+    return {
+      stop: true,
+      reason: 'max-steps',
+      code: 'MAX_STEPS',
+      detail: `The limit of ${this.limit} steps has already been reached.`,
+      evidence: { steps: this.steps, limit: this.limit },
     };
   }
 

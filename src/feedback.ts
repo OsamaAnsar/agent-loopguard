@@ -1,4 +1,4 @@
-import type { BudgetMetric, FeedbackPhase, StopVerdict } from './types';
+import type { BudgetMetric, FeedbackPhase, PreflightStopVerdict, StopVerdict } from './types';
 
 /*
  * Model-facing feedback: short, plain English, written to be pasted into the model's next turn or
@@ -52,6 +52,8 @@ const ELSE = 'Try a different tool or different arguments, or answer with what y
  * already happened, and `'preflight'` for a call that `guard.preflight` refused to let run. The
  * text is deterministic: the same verdict always produces the same string.
  */
+export function feedbackFor(verdict: PreflightStopVerdict, phase?: FeedbackPhase): string;
+export function feedbackFor(verdict: StopVerdict, phase?: FeedbackPhase): string | undefined;
 export function feedbackFor(verdict: StopVerdict, phase: FeedbackPhase = 'check'): string | undefined {
   const before = phase === 'preflight';
   switch (verdict.reason) {

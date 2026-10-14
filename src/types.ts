@@ -389,9 +389,68 @@ export interface GuardSummary {
   lastVerdict: Verdict | null;
 }
 
+// ---------------------------------------------------------------------------
+// Preflight
+// ---------------------------------------------------------------------------
+
+/** A tool call that has not run yet: all `preflight` needs is the name and the arguments. */
+export interface PreflightCall {
+  name: string;
+  args?: unknown;
+}
+
+/** The call may go ahead (as far as the rules `preflight` can evaluate are concerned). */
+export interface PreflightAllow {
+  allow: true;
+  /** Budget warnings that apply right now, if any. */
+  warnings?: GuardWarning[];
+}
+
+interface DenyBase<R extends StopReason, C extends string, E> {
+  allow: false;
+  /** Same vocabulary as `StopVerdict.reason`. */
+  reason: R;
+  /** Same vocabulary as `StopVerdict.code`. */
+  code: C;
+  /** One developer-facing sentence. May contain argument previews, like `StopVerdict.detail`. */
+  detail: string;
+  /** Structured, JSON-serialisable facts behind the decision. */
+  evidence: E;
+  /** Text to give the model in place of the tool's result. Never repeats arguments or results. */
+  feedback: string;
+}
+
+/**
+ * The call should not run. Only the rules that can be judged before a call runs appear here:
+ * `max-steps`, `budget`, `tool-limit`, `repeated-tool-call` and `oscillation`.
+ */
+export type PreflightDeny =
+  | DenyBase<'max-steps', 'MAX_STEPS', MaxStepsEvidence>
+  | DenyBase<'budget', BudgetVerdict['code'], BudgetEvidence>
+  | DenyBase<'tool-limit', 'TOOL_CALL_CAP', ToolLimitEvidence>
+  | DenyBase<'repeated-tool-call', 'REPEATED_TOOL_CALL', RepeatedToolCallEvidence>
+  | DenyBase<'oscillation', 'OSCILLATION', OscillationEvidence>;
+
+export type Preflight = PreflightAllow | PreflightDeny;
+
+/** The stop verdicts a `preflight` denial is made from. */
+export type PreflightStopVerdict =
+  | MaxStepsVerdict
+  | BudgetVerdict
+  | ToolLimitVerdict
+  | RepeatedToolCallVerdict
+  | OscillationVerdict;
+
 export interface Guard {
   /** Record a step and decide whether the run should continue. Never throws on odd step data. */
   check(step: GuardStep): Verdict;
+  /**
+   * Would this call (or these parallel calls) trip a rule if it ran now? Records nothing and does
+   * not change the guard: call it as often as you like, then still `check` the finished step.
+   * Evaluates only the rules that need no results, text, finish reason or usage; see the README
+   * ("Preflight") for the exact list. Never throws on odd call data.
+   */
+  preflight(call: PreflightCall | readonly PreflightCall[]): Preflight;
   /** Forget everything and start a fresh run (options are kept). */
   reset(): void;
   /** Counts, totals and per-detector state. Contains nothing time-dependent. */

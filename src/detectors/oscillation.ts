@@ -1,7 +1,16 @@
-import type { StepRecord } from '../record';
-import type { OscillationEvidence, OscillationOptions } from '../types';
+import type { CallRecord, StepRecord } from '../record';
+import type { OscillationEvidence, OscillationOptions, OscillationVerdict } from '../types';
 import type { Detector, DetectorResult } from './types';
 import { assertInteger } from './types';
+
+/** The newest calls (at most `maxPeriod`) and the per-period match counters. */
+interface Ring {
+  sigs: string[];
+  labels: string[];
+  names: string[];
+  /** `matches[p - 2]`: trailing calls equal to the call `p` positions earlier. */
+  matches: number[];
+}
 
 /**
  * Stops when the tail of the tool-call sequence is a cycle of length 2..`maxPeriod` that has
@@ -19,27 +28,23 @@ export class OscillationDetector implements Detector {
   readonly maxPeriod: number;
   readonly repeats: number;
 
-  private sigs: string[] = [];
-  private labels: string[] = [];
-  private names: string[] = [];
-  /** `matches[p - 2]`: trailing calls equal to the call `p` positions earlier. */
-  private matches: number[];
+  private ring: Ring;
   private current: { period: number; repeats: number } | null = null;
 
   constructor(options: OscillationOptions = {}) {
     this.maxPeriod = assertInteger('oscillation.maxPeriod', options.maxPeriod ?? 3, 2);
     this.repeats = assertInteger('oscillation.repeats', options.repeats ?? 3, 2);
-    this.matches = new Array<number>(this.maxPeriod - 1).fill(0);
+    this.ring = this.emptyRing();
   }
 
   observe(record: StepRecord): DetectorResult | undefined {
     let found: OscillationEvidence | undefined;
 
     for (const call of record.calls) {
-      this.push(call.callSig, call.label, call.name);
+      this.push(this.ring, call);
       // Check after every call (not just at the end of the step) so a pattern that completes
       // mid-step is not lost if a later call in the same step breaks it.
-      found = this.detect() ?? found;
+      found = this.detect(this.ring) ?? found;
     }
 
     this.current = found ? { period: found.period, repeats: found.repeats } : null;
@@ -56,41 +61,71 @@ export class OscillationDetector implements Detector {
     };
   }
 
-  private push(sig: string, label: string, name: string): void {
-    const n = this.sigs.length;
+  /**
+   * What `observe` would report if these calls (not yet made) were the next ones, without recording
+   * them. Results are not part of the rule, so nothing is lost by not having them yet.
+   */
+  peek(calls: readonly CallRecord[]): OscillationVerdict | undefined {
+    const ring: Ring = {
+      sigs: [...this.ring.sigs],
+      labels: [...this.ring.labels],
+      names: [...this.ring.names],
+      matches: [...this.ring.matches],
+    };
+    let found: OscillationEvidence | undefined;
+    for (const call of calls) {
+      this.push(ring, call);
+      found = this.detect(ring) ?? found;
+    }
+    if (found === undefined) return undefined;
+    return {
+      stop: true,
+      reason: 'oscillation',
+      code: 'OSCILLATION',
+      detail: `Calling now would complete a cycle of ${found.period} calls (${found.cycle.join(' -> ')}) repeated ${found.repeats} times in a row.`,
+      evidence: found,
+    };
+  }
+
+  private emptyRing(): Ring {
+    return { sigs: [], labels: [], names: [], matches: new Array<number>(this.maxPeriod - 1).fill(0) };
+  }
+
+  private push(ring: Ring, call: CallRecord): void {
+    const n = ring.sigs.length;
     for (let period = 2; period <= this.maxPeriod; period += 1) {
       const slot = period - 2;
-      const matched = n >= period && sig === this.sigs[n - period];
-      this.matches[slot] = matched ? (this.matches[slot] as number) + 1 : 0;
+      const matched = n >= period && call.callSig === ring.sigs[n - period];
+      ring.matches[slot] = matched ? (ring.matches[slot] as number) + 1 : 0;
     }
-    this.sigs.push(sig);
-    this.labels.push(label);
-    this.names.push(name);
+    ring.sigs.push(call.callSig);
+    ring.labels.push(call.label);
+    ring.names.push(call.name);
     if (n >= this.maxPeriod) {
-      this.sigs.shift();
-      this.labels.shift();
-      this.names.shift();
+      ring.sigs.shift();
+      ring.labels.shift();
+      ring.names.shift();
     }
   }
 
   /** Look for a repeating cycle at the very end of the sequence. */
-  private detect(): OscillationEvidence | undefined {
-    const n = this.sigs.length;
+  private detect(ring: Ring): OscillationEvidence | undefined {
+    const n = ring.sigs.length;
     for (let period = 2; period <= this.maxPeriod; period += 1) {
       // A tail of `period` calls followed by L matching positions contains floor(L / period) + 1
       // complete cycles.
-      const cycles = Math.floor((this.matches[period - 2] as number) / period) + 1;
+      const cycles = Math.floor((ring.matches[period - 2] as number) / period) + 1;
       if (cycles < this.repeats) continue;
 
-      const cycle = this.sigs.slice(n - period);
+      const cycle = ring.sigs.slice(n - period);
       if (new Set(cycle).size < 2) continue; // all the same call: not an oscillation
 
       return {
         period,
         repeats: cycles,
         threshold: this.repeats,
-        cycle: this.labels.slice(n - period),
-        tools: this.names.slice(n - period),
+        cycle: ring.labels.slice(n - period),
+        tools: ring.names.slice(n - period),
       };
     }
     return undefined;
@@ -101,10 +136,7 @@ export class OscillationDetector implements Detector {
   }
 
   reset(): void {
-    this.sigs = [];
-    this.labels = [];
-    this.names = [];
-    this.matches.fill(0);
+    this.ring = this.emptyRing();
     this.current = null;
   }
 }
