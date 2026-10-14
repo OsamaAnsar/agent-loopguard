@@ -1,6 +1,6 @@
 # agent-loopguard
 
-<!-- Add after the first publish: [![npm](https://img.shields.io/npm/v/@osama.ansar/agent-loopguard)](https://www.npmjs.com/package/@osama.ansar/agent-loopguard) -->
+[![npm](https://img.shields.io/npm/v/@osama.ansar/agent-loopguard)](https://www.npmjs.com/package/@osama.ansar/agent-loopguard) [![CI](https://github.com/OsamaAnsar/agent-loopguard/actions/workflows/ci.yml/badge.svg)](https://github.com/OsamaAnsar/agent-loopguard/actions/workflows/ci.yml)
 
 Agent loops fail in a few boring, expensive ways. The model calls the same tool with the same arguments again and again. Two calls ping-pong (`search`, `read`, `search`, `read`). The model repeats itself while nothing new comes back. A provider ends a final, text-only step with a finish reason the loop does not recognise as "done", so some frameworks re-send the same request until the step limit. Or the run quietly burns through a token, time or cost budget.
 
