@@ -7,7 +7,7 @@
  *
  *   npm run example:ai-sdk
  *
- * In your own project, import from 'agent-loopguard' instead of '../src/index'.
+ * In your own project, import from '@osama.ansar/agent-loopguard' instead of '../src/index'.
  */
 import { generateText, stepCountIs, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';

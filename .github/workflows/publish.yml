@@ -2,7 +2,7 @@ name: Publish
 
 # Publishes to npm (with provenance) when a GitHub Release is published.
 # Requires a repository secret named NPM_TOKEN: an npm automation token for an account that
-# may publish `agent-loopguard`. Add it under Settings > Secrets and variables > Actions.
+# may publish `@osama.ansar/agent-loopguard`. Add it under Settings > Secrets and variables > Actions.
 on:
   release:
     types: [published]

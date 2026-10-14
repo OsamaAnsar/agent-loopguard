@@ -1,6 +1,6 @@
 # agent-loopguard
 
-<!-- Add after the first publish: [![npm](https://img.shields.io/npm/v/agent-loopguard)](https://www.npmjs.com/package/agent-loopguard) -->
+<!-- Add after the first publish: [![npm](https://img.shields.io/npm/v/@osama.ansar/agent-loopguard)](https://www.npmjs.com/package/@osama.ansar/agent-loopguard) -->
 
 Agent loops fail in a few boring, expensive ways. The model calls the same tool with the same arguments again and again. Two calls ping-pong (`search`, `read`, `search`, `read`). The model repeats itself while nothing new comes back. A provider ends a final, text-only step with a finish reason the loop does not recognise as "done", so some frameworks re-send the same request until the step limit. Or the run quietly burns through a token, time or cost budget.
 
@@ -9,11 +9,11 @@ Agent loops fail in a few boring, expensive ways. The model calls the same tool 
 ## Quickstart
 
 ```bash
-npm install agent-loopguard
+npm install @osama.ansar/agent-loopguard
 ```
 
 ```ts
-import { createGuard, explain } from 'agent-loopguard';
+import { createGuard, explain } from '@osama.ansar/agent-loopguard';
 
 const guard = createGuard();
 
@@ -61,7 +61,7 @@ Plus a `custom` hook for your own rules (below).
 ### A plain loop
 
 ```ts
-import { createGuard, explain, runAgentLoop } from 'agent-loopguard';
+import { createGuard, explain, runAgentLoop } from '@osama.ansar/agent-loopguard';
 
 const result = await runAgentLoop({
   guard: createGuard({ maxSteps: 25, budget: { maxCostUsd: { limit: 0.5, warnAt: 0.8 } } }),
@@ -89,7 +89,7 @@ if (!result.completed) console.log(explain(result.verdict));
 
 ```ts
 import { generateText, stepCountIs } from 'ai';
-import { createGuard, explain, toStopWhen } from 'agent-loopguard';
+import { createGuard, explain, toStopWhen } from '@osama.ansar/agent-loopguard';
 
 const { text } = await generateText({
   model,
@@ -109,7 +109,7 @@ const { text } = await generateText({
 ### Async stream of steps
 
 ```ts
-import { createGuard, explain, withGuard } from 'agent-loopguard';
+import { createGuard, explain, withGuard } from '@osama.ansar/agent-loopguard';
 
 const steps = withGuard(agentSteps(), createGuard()); // any (async) iterable of steps
 for await (const step of steps) render(step);
@@ -122,7 +122,7 @@ The step that triggers the stop is still yielded (it already happened); iteratio
 ### A custom detector
 
 ```ts
-import { createGuard } from 'agent-loopguard';
+import { createGuard } from '@osama.ansar/agent-loopguard';
 
 const guard = createGuard({
   custom: (history, step) => {
@@ -252,6 +252,12 @@ A warning is `{ code: 'BUDGET_WARNING', metric, value, limit, ratio, detail }`.
 - `runAgentLoop({ step, guard?, signal?, onVerdict? }): Promise<{ steps, verdict, completed, aborted }>`. `completed` is true when the agent ended the run itself (a final step with no fault, or a normal `stop`), false when the guard cut it short, the finish reason was something like `length` or `error`, or the signal aborted. The signal is checked before every step; an in-flight step is not cancelled.
 - `withGuard(source, guard): AsyncIterable<step> & { verdict }`: wraps a sync or async iterable.
 
+## Related work
+
+[`agent-loop-guard`](https://www.npmjs.com/package/agent-loop-guard) (by Nextbridge) is a similar, independent library, and a good one to look at. Going by its 0.2.0 README, it wraps each tool call in `beforeCall()` / `afterCall()`, so it can block a call before it runs, and it offers per-tool call limits, saved and resumable state, and a text report you can paste into the model's context.
+
+This package takes a different shape: you pass in each finished step, and it adds a finish-reason policy (for example, ending a run when a text-only step finishes with an unfamiliar reason), budgets driven by the token, cost and duration numbers you report, and a `stopWhen` adapter for the Vercel AI SDK that is tested against the real SDK. Both have zero runtime dependencies. Pick whichever fits how your loop is written; nothing stops you from using the other one's ideas.
+
 ## Development
 
 ```bash
@@ -268,7 +274,7 @@ The package supports Node 18 and newer. The development toolchain (vitest, tsup)
 
 ### Releasing
 
-Publishing is done from a GitHub Release by `.github/workflows/publish.yml`, which publishes with npm provenance. It needs a repository secret named `NPM_TOKEN` (an npm automation token for an account allowed to publish `agent-loopguard`). Bump the version in `package.json` and `CHANGELOG.md`, tag, and create a Release.
+Publishing is done from a GitHub Release by `.github/workflows/publish.yml`, which publishes with npm provenance. It needs a repository secret named `NPM_TOKEN` (an npm automation token for an account allowed to publish `@osama.ansar/agent-loopguard`). Bump the version in `package.json` and `CHANGELOG.md`, tag, and create a Release.
 
 ## License
 

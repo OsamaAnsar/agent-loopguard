@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.1.0] - 2026-10-14
 
+Published on npm as `@osama.ansar/agent-loopguard` (the unscoped name was too close to an existing package).
+
 First release.
 
 ### Added

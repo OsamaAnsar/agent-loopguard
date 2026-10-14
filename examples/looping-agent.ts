@@ -4,7 +4,7 @@
  *
  *   npm run example:loop
  *
- * In your own project, import from 'agent-loopguard' instead of '../src/index'.
+ * In your own project, import from '@osama.ansar/agent-loopguard' instead of '../src/index'.
  */
 import { createGuard, explain, runAgentLoop } from '../src/index';
 import type { LoopStep } from '../src/index';
