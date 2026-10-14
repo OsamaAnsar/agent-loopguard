@@ -9,6 +9,8 @@ export type { AiSdkStepLike, AiSdkToolCallLike, AiSdkToolResultLike, ToStopWhenO
 export { runAgentLoop } from './adapters/loop';
 export type { AbortSignalLike, LoopResult, LoopStep, RunAgentLoopOptions } from './adapters/loop';
 export { withGuard } from './adapters/iterable';
+export { createToolRunner } from './runner';
+export type { StepMeta, ToolRunner, ToolRunnerOptions, ToolRunOutcome } from './runner';
 export type { GuardedSteps } from './adapters/iterable';
 export type {
   BudgetEvidence,

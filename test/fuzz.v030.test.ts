@@ -4,9 +4,9 @@
  * JSON-serialisable.
  */
 import { describe, expect, it } from 'vitest';
-import { createGuard, explain, feedbackFor, restoreGuard } from '../src/index';
+import { createGuard, createToolRunner, explain, feedbackFor, restoreGuard } from '../src/index';
 import type { Guard, GuardOptions, Preflight, Verdict } from '../src/index';
-import { randomPreflightInput, randomStep } from './generators';
+import { hostileValue, pick, randomPreflightInput, randomStep } from './generators';
 import { mulberry32 } from './helpers';
 
 const CONFIGS: Array<[string, () => GuardOptions]> = [
@@ -135,5 +135,42 @@ describe('fuzz (0.3.0): preflight, snapshots and restores never throw on hostile
     }
     expect(probes).toBe(12 * 90 * 2);
     expect(restores).toBe(12 * 6);
+  });
+});
+
+describe('fuzz (0.3.0): the tool runner never throws on hostile calls, executors and metadata', () => {
+  it.each(CONFIGS)('%s', async (_name, makeOptions) => {
+    let ran = 0;
+    let refused = 0;
+    for (let seed = 1; seed <= 8; seed += 1) {
+      const rand = mulberry32(seed * 3571);
+      const guard = createGuard(makeOptions());
+      const runner = createToolRunner(guard, { rethrow: false });
+      for (let stepIndex = 0; stepIndex < 25; stepIndex += 1) {
+        const batch = Array.from({ length: Math.floor(rand() * 4) }, () => {
+          const name = pick(rand, ['search', 'read', 'write', 'x', '', 'a'.repeat(100)]);
+          const args = rand() < 0.5 ? { q: pick(rand, ['a', 'b']) } : hostileValue(rand);
+          const executor = (): unknown => {
+            const r = rand();
+            if (r < 0.15) throw hostileValue(rand);
+            if (r < 0.3) return Promise.reject(hostileValue(rand));
+            if (r < 0.6) return Promise.resolve(hostileValue(rand));
+            return hostileValue(rand);
+          };
+          return runner.run(name, args, executor);
+        });
+        const outcomes = await Promise.all(batch);
+        for (const o of outcomes) {
+          expect(typeof o.ran).toBe('boolean');
+          if (o.ran) ran += 1;
+          else refused += 1;
+        }
+        const verdict = runner.endStep(randomStep(rand) as never);
+        assertWellFormed(verdict);
+        expect(runner.inFlight).toBe(0);
+      }
+    }
+    expect(ran).toBeGreaterThan(50);
+    expect(refused + ran).toBeGreaterThan(100);
   });
 });

@@ -50,3 +50,6 @@ jobs:
 
       - name: Run the windowed repeats and warnings example
         run: npm run example:warnings
+
+      - name: Run the tool runner example
+        run: npm run example:runner

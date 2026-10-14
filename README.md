@@ -237,6 +237,39 @@ By default two calls are the same when their canonical forms are equal, so a cal
 - **Snapshots.** Functions cannot be saved, and a snapshot cannot tell whether you pass the same one on restore, exactly as with `custom` detectors and `feedback`. What it does record is which of the three are set, as a `signatures` entry in the options fingerprint (present only when at least one is set, so snapshots without them are as they were): restoring without a function the snapshot was taken with, with one it was not, or with a different set, throws a `TypeError` naming `signatures`. A snapshot taken before you added a function (including any from 0.2.0) is refused when you turn one on, because the hashes in it were made with the default form. Pass the same functions when you restore.
 - **Not covered.** Your functions run synchronously inside `check`/`preflight`, on every call; keep them cheap and deterministic. A function with side effects, or one whose answer changes over time, will make verdicts differ between a run and its replay (`toStopWhen` replays all steps on every call).
 
+### Run your tools through the guard
+
+```ts
+import { createGuard, createToolRunner } from '@osama.ansar/agent-loopguard';
+
+const guard = createGuard({ warnings: true, tools: { search: { maxCalls: 8 } } });
+const runner = createToolRunner(guard);
+
+// One model turn: run its tool calls (in parallel if you like), then close the step.
+const outcomes = await Promise.all(
+  modelToolCalls.map((c) => runner.run(c.name, c.args, () => tools[c.name](c.args))),
+);
+outcomes.forEach((outcome, i) => {
+  const id = modelToolCalls[i].id;
+  if (!outcome.ran) toolMessages.push({ id, content: 'denied' in outcome ? outcome.denied.feedback : 'cancelled' });
+  else toolMessages.push({ id, content: outcome.ok ? String(outcome.result) : `Error: ${String(outcome.error)}` });
+});
+const verdict = runner.endStep({ text, finishReason, usage });
+if (verdict.stop) break;
+```
+
+`createToolRunner(guard, options?)` is the glue most loops write by hand: `guard.preflight` before a call, run it, remember the call with its result or error, `guard.check` for the finished step. It returns `{ run, endStep, inFlight }`:
+
+- **`run(name, args, executor)`** asks `guard.preflight` first. If the call is allowed it runs `executor()` (sync or async) and resolves to `{ ran: true, ok: true, result }` or `{ ran: true, ok: false, error }`. If it is refused the executor does **not** run and `run` resolves to `{ ran: false, denied }`, where `denied` is the `preflight` refusal with the model-safe `feedback` to send back in place of the tool's result.
+- **Errors come back, they are not thrown.** The original error object is in the outcome, because a failed tool call is ordinary data in an agent loop and usually becomes the tool result the model sees. Pass `{ rethrow: true }` to have `run` reject with the original error instead; the call is recorded as failed either way (a thrown `null` or `undefined` is recorded as a failure too, and returned as thrown). An executor that throws synchronously is handled the same way. The other library's `run()` rethrows by default; this one does not.
+- **Refused calls are not recorded.** They never reach `check`, so the repeat rule cannot fire on a refusal itself (see [Check a call before it runs](#check-a-call-before-it-runs)); the step still counts towards `maxSteps`.
+- **Parallel calls.** Calls are judged together, in the order `run` was called, together with the calls already started in this step: with a repeat threshold of three, starting three identical calls at once runs two and refuses the third. Calls are recorded in the order they **started**, not the order they finished, so the step is the same however the tools' timings fall.
+- **`endStep(meta?)`** builds the step from the calls run since the last `endStep` plus `meta` (`text`, `finishReason`, `usage`, `durationMs`, `timestamp`), calls `guard.check`, empties the buffer and returns the verdict. A `toolCalls` in `meta` is ignored. If a call is still running it throws an `Error` and changes nothing: await the `run` promises first (`runner.inFlight` says how many are pending). A tool that never settles therefore blocks `endStep`; give your tools their own timeouts.
+- **Abort.** With `{ signal }` (anything with `aborted`, an `AbortSignal` included), `run` starts nothing once it is aborted and resolves to `{ ran: false, aborted: true }`, without asking the guard and without recording. Calls already running are not cancelled; they finish and are recorded. Cancelling a tool is up to the executor.
+- **What it does not do.** It does not call the model, retry, time out or cancel your tools, and one runner belongs to one guard and one loop: it keeps one step buffer, so run two agents with two runners.
+
+`npm run example:runner` runs a complete offline loop with parallel calls, a failing tool, a refused call and its feedback.
+
 ### Check a call before it runs
 
 ```ts
@@ -370,7 +403,7 @@ The restored guard goes on exactly where the original stopped: given the same st
 - **No semantic loop detection.** It compares tool names, arguments, results and text after normalisation. A model that rewords its text and varies one argument slightly each time is not detected, and no embedding or LLM is involved.
 - **No cost table.** It never estimates tokens or prices. Token and cost limits only work on the numbers you pass in `usage`; if you supply no `costUsd`, a `maxCostUsd` limit can never fire.
 - **No LLM calls and no network.** It is plain, synchronous code.
-- **It does not run your agent.** `runAgentLoop` is a ten-line convenience, not a framework.
+- **It does not run your agent.** `runAgentLoop` is a ten-line convenience, not a framework, and `createToolRunner` runs your tool executors around the guard, not the model or the loop.
 - **It does not cancel in-flight work.** A verdict is advice; stopping is up to the caller (`runAgentLoop` and `toStopWhen` do it for you at step boundaries).
 - **Defaults are not benchmarked.** Thresholds such as "3 in a row" are conventions, not measured optima. Check them against your own traces.
 - **History is kept in memory** for the life of the guard (`reset()` clears it). It is cheap for a normal run but is not designed for unbounded sessions. The detectors themselves keep bounded state; only `guard.history` (the raw steps) grows.
@@ -540,6 +573,24 @@ interface GuardSnapshot {
 
 Plain JSON-safe data. The shape of each detector's state is exported as a type (`RepeatedToolCallSnapshot`, `OscillationSnapshot`, `NoProgressSnapshot`) but is an implementation detail: treat a snapshot as opaque and only pass it to `createGuard.fromJSON`. See [Save and resume a run](#save-and-resume-a-run).
 
+### `createToolRunner(guard, options?)`
+
+```ts
+createToolRunner(guard: Guard, options?: { rethrow?: boolean; signal?: { aborted: boolean } }): {
+  run<T>(name: string, args: unknown, executor: () => T | PromiseLike<T>): Promise<ToolRunOutcome<T>>;
+  endStep(meta?: Omit<GuardStep, 'toolCalls'>): Verdict;
+  readonly inFlight: number;
+};
+
+type ToolRunOutcome<T> =
+  | { ran: true; ok: true; result: T }
+  | { ran: true; ok: false; error: unknown }
+  | { ran: false; denied: PreflightDeny }       // not run, not recorded; denied.feedback is for the model
+  | { ran: false; aborted: true };
+```
+
+See [Run your tools through the guard](#run-your-tools-through-the-guard).
+
 ### Adapters
 
 - `toStopWhen(guardFactory | options, { onStop }?)`: returns `({ steps }) => boolean`, usable as an AI SDK `stopWhen` condition. Idempotent (see above). Only the verdict for the latest step counts. Because it replays steps in a fresh guard, a wall-clock `maxDurationMs` is meaningless there; step durations (`performance.stepTimeMs`) are used instead.
@@ -571,6 +622,7 @@ npm run build
 npm run example:loop
 npm run example:preflight # preflight, feedback, per-tool policies and save/resume, offline
 npm run example:warnings  # windowed repeats and early warnings, offline
+npm run example:runner    # the tool runner with parallel calls, offline
 npm run example:ai-sdk    # Node >= 22 (needs the `ai` dev dependency)
 ```
 

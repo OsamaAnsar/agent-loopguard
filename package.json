@@ -68,6 +68,7 @@
     "example:ai-sdk": "tsx examples/ai-sdk-stop-when.ts",
     "example:preflight": "tsx examples/preflight-and-feedback.ts",
     "example:warnings": "tsx examples/window-and-warnings.ts",
+    "example:runner": "tsx examples/tool-runner.ts",
     "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "devDependencies": {
