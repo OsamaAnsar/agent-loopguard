@@ -1,0 +1,81 @@
+{
+  "name": "agent-loopguard",
+  "version": "0.1.0",
+  "description": "Framework-agnostic loop and budget guard for AI agents: detects repeated tool calls, oscillation, no-progress text, unfamiliar finish reasons and budget overruns, and tells you why to stop.",
+  "keywords": [
+    "ai",
+    "agents",
+    "llm",
+    "agentic",
+    "loop-detection",
+    "guardrails",
+    "circuit-breaker",
+    "tool-calling",
+    "vercel-ai-sdk",
+    "budget",
+    "typescript"
+  ],
+  "homepage": "https://github.com/OsamaAnsar/agent-loopguard#readme",
+  "bugs": {
+    "url": "https://github.com/OsamaAnsar/agent-loopguard/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OsamaAnsar/agent-loopguard.git"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Osama Ansar",
+    "url": "https://github.com/OsamaAnsar"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "example:loop": "tsx examples/looping-agent.ts",
+    "example:ai-sdk": "tsx examples/ai-sdk-stop-when.ts",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^20.19.43",
+    "@vitest/coverage-v8": "^3.2.7",
+    "ai": "^7.0.140",
+    "eslint": "^9.39.5",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^3.2.7",
+    "zod": "^4.6.7"
+  }
+}
