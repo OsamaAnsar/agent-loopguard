@@ -56,6 +56,7 @@ export interface GuardStep {
 
 export type StopReason =
   | 'max-steps'
+  | 'tool-limit'
   | 'repeated-tool-call'
   | 'oscillation'
   | 'no-progress'
@@ -68,6 +69,7 @@ export type BudgetMetric = 'totalTokens' | 'inputTokens' | 'outputTokens' | 'cos
 /** Stable machine-readable codes. Safe to switch on; new codes are only added in minor versions. */
 export type BuiltinStopCode =
   | 'MAX_STEPS'
+  | 'TOOL_CALL_CAP'
   | 'REPEATED_TOOL_CALL'
   | 'OSCILLATION'
   | 'NO_PROGRESS'
@@ -85,16 +87,25 @@ export interface MaxStepsEvidence {
   limit: number;
 }
 
+export interface ToolLimitEvidence {
+  tool: string;
+  /** Calls to the tool in this run, counting the one that went over. */
+  calls: number;
+  /** The tool's `maxCalls`. */
+  limit: number;
+}
+
 export interface RepeatedToolCallEvidence {
   tool: string;
   /** Canonical form of the arguments, truncated for display. */
   argsPreview: string;
   /** Length of the run of identical calls. */
   count: number;
+  /** The threshold that applied to this tool (the global one unless the tool's policy changes it). */
   threshold: number;
   /** Indexes (0-based) of the steps that contain the run; at most the last 10. */
   stepIndexes: number[];
-  /** True when the rule was configured to require identical results too. */
+  /** True when identical results were required too (the global option, or a `polling` tool). */
   identicalResults: boolean;
 }
 
@@ -146,6 +157,7 @@ interface StopBase<R extends StopReason, C extends string, E> {
 }
 
 export type MaxStepsVerdict = StopBase<'max-steps', 'MAX_STEPS', MaxStepsEvidence>;
+export type ToolLimitVerdict = StopBase<'tool-limit', 'TOOL_CALL_CAP', ToolLimitEvidence>;
 export type RepeatedToolCallVerdict = StopBase<
   'repeated-tool-call',
   'REPEATED_TOOL_CALL',
@@ -172,6 +184,7 @@ export type CustomVerdict = StopBase<'custom', string, unknown>;
 
 export type StopVerdict =
   | MaxStepsVerdict
+  | ToolLimitVerdict
   | RepeatedToolCallVerdict
   | OscillationVerdict
   | NoProgressVerdict
@@ -271,6 +284,32 @@ export type CustomDetector = (
   step: GuardStep,
 ) => CustomStop | { stop: false } | undefined;
 
+/**
+ * Rules for one tool, keyed by tool name in `GuardOptions.tools`. Every field is optional. See the
+ * README ("Per-tool policies") for how they combine with the global detectors.
+ */
+export interface ToolPolicy {
+  /**
+   * Identical arguments are legitimate for this tool as long as the results keep changing (a job
+   * status poll, a paginated read). The repeated-call rule then applies only when the results are
+   * identical too, after `maxIdenticalResults` identical outcomes in a row (default: the tool's
+   * `repeatThreshold`, else the global threshold). `true` is the same as `{}`.
+   */
+  polling?: boolean | { maxIdenticalResults?: number };
+  /**
+   * At most this many calls to the tool in one run (integer >= 0; `0` forbids the tool). The call
+   * after the limit stops the run with `TOOL_CALL_CAP` (and `guard.preflight` denies it before it runs).
+   */
+  maxCalls?: number;
+  /** Stop after this many identical calls in a row to this tool. Integer >= 2. Overrides the global threshold. */
+  repeatThreshold?: number;
+  /**
+   * Leave the tool out of repeat, oscillation and no-progress detection and out of `maxCalls`
+   * (for bookkeeping tools such as `think` or `todo`). Takes precedence over the other fields.
+   */
+  ignore?: boolean;
+}
+
 export interface GuardOptions {
   /** Stop after this many steps. Integer >= 1. Default 50. `false` disables. */
   maxSteps?: number | false;
@@ -284,6 +323,8 @@ export interface GuardOptions {
   finishReason?: FinishReasonOptions | false;
   /** Default: no limits. */
   budget?: BudgetOptions | false;
+  /** Per-tool rules by tool name; tools that are not listed follow the global options. */
+  tools?: Readonly<Record<string, ToolPolicy>>;
   /** Extra detectors, run after the built-in ones. */
   custom?: CustomDetector | readonly CustomDetector[];
   /** Clock used for wall-clock duration budgets. Default `Date.now`. */
@@ -312,6 +353,7 @@ export interface GuardSummary {
   detectors: {
     maxSteps: { limit: number; remaining: number } | null;
     repeatedToolCall: {
+      /** The global threshold; tools with their own `repeatThreshold` or `polling` policy can differ. */
       threshold: number;
       currentRun: { tool: string; length: number } | null;
       longestRun: number;
@@ -320,6 +362,8 @@ export interface GuardSummary {
     noProgress: { threshold: number; streak: number } | null;
     finishReason: { lastFinishReason: string | null } | null;
     budget: { limits: Partial<Record<BudgetMetric, number>>; used: Record<BudgetMetric, number> } | null;
+    /** Calls so far against each tool's `maxCalls`. Present only when at least one tool has a cap. */
+    toolLimits?: Array<{ tool: string; limit: number; calls: number }>;
   };
   /** The verdict returned by the most recent `check`, or `null` before the first one. */
   lastVerdict: Verdict | null;

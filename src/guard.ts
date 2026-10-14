@@ -4,9 +4,11 @@ import { MaxStepsDetector } from './detectors/maxSteps';
 import { NoProgressDetector } from './detectors/noProgress';
 import { OscillationDetector } from './detectors/oscillation';
 import { RepeatedToolCallDetector } from './detectors/repeatedToolCall';
+import { ToolLimitDetector } from './detectors/toolLimit';
 import type { Detector, DetectorContext, DetectorResult } from './detectors/types';
 import { buildRecord } from './record';
 import type { StepRecord } from './record';
+import { ToolPolicies } from './toolPolicy';
 import type {
   CustomDetector,
   Guard,
@@ -52,29 +54,44 @@ function zeroTotals(): GuardTotals {
  * Create a guard. Feed it one step at a time with `check`; it answers `{ stop: false }` or a
  * typed verdict saying why the run should end.
  *
- * Detectors run in this order and the first stop wins: finish reason, budget, max steps,
- * repeated tool call, oscillation, no progress, then custom detectors. All of them see every step
- * even after one has stopped, so their state stays consistent.
+ * Detectors run in this order and the first stop wins: finish reason, budget, max steps, tool
+ * limit, repeated tool call, oscillation, no progress, then custom detectors. All of them see
+ * every step even after one has stopped, so their state stays consistent.
+ *
+ * Tools with `ignore: true` in `options.tools` are removed from the calls the tool-limit,
+ * repeated-call, oscillation and no-progress detectors see.
  *
  * Invalid options throw a `TypeError` here, never later from `check`.
  */
 export function createGuard(options: GuardOptions = {}): Guard {
   const now = options.now ?? Date.now;
 
+  const policies = new ToolPolicies(options.tools);
   const maxSteps = options.maxSteps === false ? undefined : new MaxStepsDetector(options.maxSteps ?? DEFAULT_MAX_STEPS);
-  const repeated = options.repeatedToolCall === false ? undefined : new RepeatedToolCallDetector(options.repeatedToolCall);
+  const repeated = options.repeatedToolCall === false ? undefined : new RepeatedToolCallDetector(options.repeatedToolCall, policies);
   const oscillation = options.oscillation === false ? undefined : new OscillationDetector(options.oscillation);
   const noProgress = options.noProgress === false ? undefined : new NoProgressDetector(options.noProgress);
   const finish = options.finishReason === false ? undefined : new FinishReasonDetector(options.finishReason);
+  const toolLimit = policies.capped.length > 0 ? new ToolLimitDetector(policies) : undefined;
   const budget = options.budget === undefined || options.budget === false ? undefined : new BudgetDetector(options.budget, now);
 
   const customFns: readonly CustomDetector[] =
     options.custom === undefined ? [] : typeof options.custom === 'function' ? [options.custom] : options.custom;
   const custom = customFns.map((fn) => new CustomRunner(fn));
 
-  // Evaluation order = priority order.
-  const optional: Array<Detector | undefined> = [finish, budget, maxSteps, repeated, oscillation, noProgress, ...custom];
-  const detectors = optional.filter((d): d is Detector => d !== undefined);
+  // Evaluation order = priority order. `scoped` detectors judge tool calls, so they do not see
+  // the calls of ignored tools.
+  const optional: Array<{ detector: Detector | undefined; scoped: boolean }> = [
+    { detector: finish, scoped: false },
+    { detector: budget, scoped: false },
+    { detector: maxSteps, scoped: false },
+    { detector: toolLimit, scoped: true },
+    { detector: repeated, scoped: true },
+    { detector: oscillation, scoped: true },
+    { detector: noProgress, scoped: true },
+    ...custom.map((detector) => ({ detector, scoped: false })),
+  ];
+  const detectors = optional.filter((d): d is { detector: Detector; scoped: boolean } => d.detector !== undefined);
 
   let history: GuardStep[] = [];
   let totals = zeroTotals();
@@ -96,11 +113,14 @@ export function createGuard(options: GuardOptions = {}): Guard {
     toolCalls += record.calls.length;
     failedToolCalls += record.calls.filter((c) => c.failed).length;
 
+    const scopedRecord: StepRecord = policies.hasIgnored
+      ? { ...record, calls: record.calls.filter((c) => !policies.isIgnored(c.name)) }
+      : record;
     const ctx: DetectorContext = { totals, step: safe, history };
     let stop: StopVerdict | undefined;
     const warnings: GuardWarning[] = [];
-    for (const detector of detectors) {
-      const result = detector.observe(record, ctx);
+    for (const { detector, scoped } of detectors) {
+      const result = detector.observe(scoped ? scopedRecord : record, ctx);
       if (result === undefined) continue;
       if (result.stop !== undefined && stop === undefined) stop = result.stop;
       if (result.warnings !== undefined) warnings.push(...result.warnings);
@@ -119,7 +139,7 @@ export function createGuard(options: GuardOptions = {}): Guard {
     toolCalls = 0;
     failedToolCalls = 0;
     lastVerdict = null;
-    for (const detector of detectors) detector.reset();
+    for (const { detector } of detectors) detector.reset();
   }
 
   function summary(): GuardSummary {
@@ -135,6 +155,7 @@ export function createGuard(options: GuardOptions = {}): Guard {
         noProgress: noProgress ? noProgress.state() : null,
         finishReason: finish ? finish.state() : null,
         budget: budget ? budget.state() : null,
+        ...(toolLimit ? { toolLimits: toolLimit.state() } : {}),
       },
       lastVerdict,
     };

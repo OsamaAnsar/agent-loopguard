@@ -4,6 +4,8 @@ function hint(verdict: StopVerdict): string {
   switch (verdict.reason) {
     case 'max-steps':
       return 'Raise maxSteps if the task really needs more steps; otherwise find out why the agent is not converging.';
+    case 'tool-limit':
+      return 'The model called a tool more often than its maxCalls allows. Raise the limit if the task needs it, or look at why the model keeps going back to this tool.';
     case 'repeated-tool-call':
       return 'The model keeps issuing the same call. Check that the tool result gives it something to act on, and that the prompt says what to do when a tool fails.';
     case 'oscillation':

@@ -43,5 +43,8 @@ export type {
   RepeatedToolCallVerdict,
   StopReason,
   StopVerdict,
+  ToolLimitEvidence,
+  ToolLimitVerdict,
+  ToolPolicy,
   Verdict,
 } from './types';
