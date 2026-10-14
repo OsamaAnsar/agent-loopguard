@@ -3,9 +3,6 @@ import type { OscillationEvidence, OscillationOptions } from '../types';
 import type { Detector, DetectorResult } from './types';
 import { assertInteger } from './types';
 
-/** Keep memory bounded on very long runs: trim to the newest half once the window overflows. */
-const WINDOW = 4096;
-
 /**
  * Stops when the tail of the tool-call sequence is a cycle of length 2..`maxPeriod` that has
  * repeated at least `repeats` times in a row (A,B,A,B,A,B is period 2, three repeats).
@@ -13,6 +10,10 @@ const WINDOW = 4096;
  * The sequence is the flattened list of call signatures (tool name + canonical arguments;
  * results are ignored). A cycle made of a single distinct call (A,A,A,A,A,A) is not an
  * oscillation, that is `repeatedToolCall`'s job.
+ *
+ * Only the newest `maxPeriod` calls are kept, plus one counter per period: how many trailing
+ * calls equal the call `period` positions earlier. That is all the rule needs, so memory and the
+ * work per call are bounded by `maxPeriod`, however long the run is.
  */
 export class OscillationDetector implements Detector {
   readonly maxPeriod: number;
@@ -20,23 +21,21 @@ export class OscillationDetector implements Detector {
 
   private sigs: string[] = [];
   private labels: string[] = [];
+  /** `matches[p - 2]`: trailing calls equal to the call `p` positions earlier. */
+  private matches: number[];
   private current: { period: number; repeats: number } | null = null;
 
   constructor(options: OscillationOptions = {}) {
     this.maxPeriod = assertInteger('oscillation.maxPeriod', options.maxPeriod ?? 3, 2);
     this.repeats = assertInteger('oscillation.repeats', options.repeats ?? 3, 2);
+    this.matches = new Array<number>(this.maxPeriod - 1).fill(0);
   }
 
   observe(record: StepRecord): DetectorResult | undefined {
     let found: OscillationEvidence | undefined;
 
     for (const call of record.calls) {
-      this.sigs.push(call.callSig);
-      this.labels.push(call.label);
-      if (this.sigs.length > WINDOW) {
-        this.sigs.splice(0, WINDOW / 2);
-        this.labels.splice(0, WINDOW / 2);
-      }
+      this.push(call.callSig, call.label);
       // Check after every call (not just at the end of the step) so a pattern that completes
       // mid-step is not lost if a later call in the same step breaks it.
       found = this.detect() ?? found;
@@ -56,18 +55,28 @@ export class OscillationDetector implements Detector {
     };
   }
 
+  private push(sig: string, label: string): void {
+    const n = this.sigs.length;
+    for (let period = 2; period <= this.maxPeriod; period += 1) {
+      const slot = period - 2;
+      const matched = n >= period && sig === this.sigs[n - period];
+      this.matches[slot] = matched ? (this.matches[slot] as number) + 1 : 0;
+    }
+    this.sigs.push(sig);
+    this.labels.push(label);
+    if (n >= this.maxPeriod) {
+      this.sigs.shift();
+      this.labels.shift();
+    }
+  }
+
   /** Look for a repeating cycle at the very end of the sequence. */
   private detect(): OscillationEvidence | undefined {
     const n = this.sigs.length;
     for (let period = 2; period <= this.maxPeriod; period += 1) {
-      if (n < period * this.repeats) continue;
-
-      // L = how many trailing positions i satisfy sigs[i] === sigs[i - period].
-      // A tail of `period` calls followed by L matching positions contains
-      // floor(L / period) + 1 complete cycles.
-      let matching = 0;
-      for (let i = n - 1; i >= period && this.sigs[i] === this.sigs[i - period]; i -= 1) matching += 1;
-      const cycles = Math.floor(matching / period) + 1;
+      // A tail of `period` calls followed by L matching positions contains floor(L / period) + 1
+      // complete cycles.
+      const cycles = Math.floor((this.matches[period - 2] as number) / period) + 1;
       if (cycles < this.repeats) continue;
 
       const cycle = this.sigs.slice(n - period);
@@ -90,6 +99,7 @@ export class OscillationDetector implements Detector {
   reset(): void {
     this.sigs = [];
     this.labels = [];
+    this.matches.fill(0);
     this.current = null;
   }
 }

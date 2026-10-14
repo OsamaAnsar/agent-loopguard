@@ -1,8 +1,18 @@
-import { truncate } from '../canonical';
+import { hashString, truncate } from '../canonical';
 import type { StepRecord } from '../record';
 import type { NoProgressOptions } from '../types';
 import type { Detector, DetectorResult } from './types';
 import { assertInteger } from './types';
+
+/**
+ * How many distinct outcomes are remembered. The oldest is forgotten first, so in a run with more
+ * distinct outcomes than this, an outcome that old counts as new again. Bounds memory (and the size
+ * of a snapshot) on very long runs.
+ */
+export const MAX_REMEMBERED_OUTCOMES = 1024;
+
+/** Longest text excerpt kept for messages. */
+const PREVIEW_LIMIT = 80;
 
 /**
  * Stops after `threshold` consecutive "stalled" steps that all carry the same normalised text.
@@ -18,7 +28,10 @@ export class NoProgressDetector implements Detector {
 
   private seen = new Set<string>();
   private streak = 0;
-  private streakText = '';
+  /** Hash of the normalised text the current streak shares. */
+  private streakKey = '';
+  /** Shortened text of the current streak, for messages. Empty exactly when the text is empty. */
+  private streakPreview = '';
 
   constructor(options: NoProgressOptions = {}) {
     this.threshold = assertInteger('noProgress.threshold', options.threshold ?? 3, 2);
@@ -29,33 +42,45 @@ export class NoProgressDetector implements Detector {
     for (const call of record.calls) {
       if (!this.seen.has(call.outcomeSig)) {
         hasNew = true;
-        this.seen.add(call.outcomeSig);
+        this.remember(call.outcomeSig);
       }
     }
 
+    const textKey = hashString(record.text);
     if (hasNew) {
       this.streak = 0;
-    } else if (this.streak > 0 && record.text === this.streakText) {
+    } else if (this.streak > 0 && textKey === this.streakKey) {
       this.streak += 1;
     } else {
       this.streak = 1;
-      this.streakText = record.text;
+      this.streakKey = textKey;
+      this.streakPreview = truncate(record.text, PREVIEW_LIMIT);
     }
 
     if (this.streak < this.threshold) return undefined;
-    const preview = truncate(this.streakText, 80);
+    const preview = this.streakPreview;
     return {
       stop: {
         stop: true,
         reason: 'no-progress',
         code: 'NO_PROGRESS',
         detail:
-          this.streakText === ''
+          preview === ''
             ? `No progress: ${this.streak} consecutive steps produced no new tool results and no text.`
             : `No progress: ${this.streak} consecutive steps repeated the same text and produced no new tool results ("${preview}").`,
         evidence: { steps: this.streak, threshold: this.threshold, textPreview: preview },
       },
     };
+  }
+
+  private remember(outcome: string): void {
+    this.seen.add(outcome);
+    if (this.seen.size > MAX_REMEMBERED_OUTCOMES) {
+      for (const oldest of this.seen) {
+        this.seen.delete(oldest);
+        break;
+      }
+    }
   }
 
   state(): { threshold: number; streak: number } {
@@ -65,6 +90,7 @@ export class NoProgressDetector implements Detector {
   reset(): void {
     this.seen.clear();
     this.streak = 0;
-    this.streakText = '';
+    this.streakKey = '';
+    this.streakPreview = '';
   }
 }

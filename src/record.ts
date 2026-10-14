@@ -1,11 +1,14 @@
-import { describe } from './canonical';
+import { describe, hashString } from './canonical';
 
 /** One tool call, reduced to the comparable facts the detectors need. */
 export interface CallRecord {
   name: string;
   /** `tool(args)` with a truncated canonical argument string, for messages. */
   label: string;
-  /** Equality key for "same tool, same arguments". */
+  /**
+   * Equality key for "same tool, same arguments". Always a fixed-length hash, so detector state
+   * holds no raw arguments (and can be snapshotted without them).
+   */
   callSig: string;
   /** Equality key of the result or error; `undefined` when neither was supplied. */
   resultSig: string | undefined;
@@ -77,11 +80,11 @@ function buildCall(raw: unknown): CallRecord | undefined {
   const error = get(raw, 'error');
   const result = get(raw, 'result');
   const failed = error !== undefined && error !== null;
-  const callSig = `${JSON.stringify(name)}(${args.signature})`;
+  const callSig = hashString(`${JSON.stringify(name)}(${args.signature})`);
 
   let resultSig: string | undefined;
-  if (failed) resultSig = `error:${describe(error).signature}`;
-  else if (result !== undefined) resultSig = `ok:${describe(result).signature}`;
+  if (failed) resultSig = hashString(`error:${describe(error).signature}`);
+  else if (result !== undefined) resultSig = hashString(`ok:${describe(result).signature}`);
 
   return {
     name,
@@ -89,7 +92,7 @@ function buildCall(raw: unknown): CallRecord | undefined {
     callSig,
     resultSig,
     // With no result supplied the call itself stands in as "the evidence".
-    outcomeSig: resultSig === undefined ? callSig : `${callSig}=>${resultSig}`,
+    outcomeSig: resultSig === undefined ? callSig : hashString(`${callSig}=>${resultSig}`),
     failed,
     argsPreview: args.preview,
   };
