@@ -31,6 +31,7 @@ const CONFIGS: Array<[string, () => GuardOptions]> = [
     }),
   ],
   ['warnings explicitly off', () => ({ warnings: false, repeatedToolCall: { window: { size: 5, maxRepeats: 2 } }, oscillation: { warnAt: 2, repeats: 3 } })],
+  ['a hook that records and one that throws', () => ({ onDecision: (e) => { if (e.phase === 'check' && e.verdict.stop) throw new Error('hook'); } })],
   ['the largest window', () => ({ maxSteps: false, repeatedToolCall: { window: { size: 1000, maxRepeats: 4 } } })],
 ];
 
@@ -74,7 +75,11 @@ describe('fuzz (0.3.0): the guard never throws on arbitrary steps', () => {
       for (let i = 0; i < 120; i += 1) {
         assertWellFormed(guard.check(randomStep(rand)));
         checked += 1;
-        if (i % 40 === 39) expect(() => JSON.stringify(guard.summary())).not.toThrow();
+        if (i % 40 === 39) {
+          expect(() => JSON.stringify(guard.summary())).not.toThrow();
+          expect(typeof guard.report()).toBe('string');
+          expect(() => JSON.stringify(guard.report({ format: 'json' }))).not.toThrow();
+        }
         if (i === 79) guard.reset();
       }
     }

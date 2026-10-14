@@ -283,6 +283,44 @@ const guard = createGuard({
 
 `phase` is `'check'` for a verdict from `check` and `'preflight'` for a refused call, whose default wording differs ("That call was not run: ..."). `feedback` is called only for faults; if it throws, the error propagates out of `check` / `preflight`. Keeping your own text free of secrets is up to you.
 
+### Report the run, and watch every decision
+
+```ts
+import { createGuard } from '@osama.ansar/agent-loopguard';
+
+const guard = createGuard({
+  warnings: true,
+  onDecision: ({ phase, verdict }) => metrics.count(`guard.${phase}`, { stop: 'stop' in verdict ? verdict.stop : !verdict.allow }),
+});
+
+// ...after some steps:
+messages.push({ role: 'user', content: guard.report() });
+```
+
+`guard.report()` renders a short status block for the model's context. It is deterministic (the same facts give the same text) and built only from counts, fixed wording and tool names that look like identifiers, so it never contains arguments, results, errors or model text:
+
+```
+Loop guard status
+Steps: 5
+Tool calls: 8 (1 failed): read 4, search 3, write 1
+Warnings:
+- You have called `read` 2 times in a row with the same arguments. Calling it that way once more will stop this task. Try a different tool or different arguments, or answer with what you have.
+```
+
+A third `read` with the same arguments would stop the run, and the report would then end with `Last stop: repeated-tool-call (REPEATED_TOOL_CALL)`.
+
+- **Contents.** Steps; calls with the number that failed and calls per tool (most called first, ties by name; the first 8 are listed, the rest summed as `other tools`); the warnings carried by the most recent verdict, worded for the model (`feedbackForWarning`); and the most recent stop's reason and code (a custom code only if it looks like an identifier, else `CUSTOM`). Lines for warnings and for a stop appear only when there is one.
+- **Bounded.** Calls are counted by name for at most 32 distinct names that match `/^[A-Za-z0-9_.:/-]{1,64}$/`, as for model-facing text; every other call (an odd name, or a 33rd name) is summed in `otherToolCalls`. The tally is part of the snapshot, so a restored guard keeps counting. A snapshot from 0.2.0 has none, so for a run resumed from one the per-tool counts start at zero (`steps` and `toolCalls` still carry over).
+- **Last verdict.** The warnings and the last stop come from verdicts this guard object has returned, like `summary().lastVerdict`: after a restore the report shows neither until the next `check`. `reset()` clears them.
+- **JSON.** `guard.report({ format: 'json' })` returns the same facts as a plain `GuardReport` object (`steps`, `toolCalls`, `failedToolCalls`, `callsByTool`, `otherToolCalls`, `warnings: [{ code, message }]`, `lastStop`). Only the literal `'json'` asks for the object; anything else gives the text.
+
+`onDecision({ phase, verdict })` is called after every `check` (`phase: 'check'`, `verdict` is the `Verdict`) and every `preflight` (`phase: 'preflight'`, `verdict` is the `Preflight` answer), for logging and metrics. It cannot influence the guard:
+
+- It receives a copy (`structuredClone`; if the evidence of a custom stop cannot be copied it gets the event itself), so changing it changes neither the verdict the caller holds nor `summary().lastVerdict`.
+- What it throws is swallowed, and so is the rejection of a promise it returns.
+- Calling `check`, `preflight` or `reset` on the same guard from inside it throws an `Error` ("cannot be called from inside onDecision"), and the guard's state is untouched. The Error is thrown at the call site in your hook; if the hook does not catch it, it is swallowed like any other. Reading the guard (`summary`, `report`, `toJSON`, `snapshot`, `history`) and using another guard are fine. The guard has finished the decision before it calls the hook, so what you read is consistent.
+- It is not called for a `check` that throws (a custom detector's error). It is not stored in a snapshot or checked when restoring.
+
 ### Save and resume a run
 
 ```ts
@@ -299,9 +337,9 @@ const guard = createGuard.fromJSON(JSON.parse(await store.get(`run:${runId}`)), 
 
 The restored guard goes on exactly where the original stopped: given the same steps it returns the same verdicts and the same summaries (this is checked by a differential test that cuts random runs at random points, through `structuredClone` and through a JSON round trip). `restoreGuard` is the same function as `createGuard.fromJSON`.
 
-- **What a snapshot holds.** Version number, step and call counters, running totals, the wall-clock time used so far (only when there is a duration budget), tool names, hashes of recent calls and outcomes, and a few previews of at most 80 characters of recent arguments and text, kept so that evidence and messages read the same after a restore. **What it does not hold:** raw arguments, results, errors, model text, the step history, the options, the last verdict. Hashes are not cryptographic; a short, guessable value could be recovered by hashing candidates, so treat a snapshot as run data, not as public. `guard.snapshot({ redact: true })` replaces the previews with `[redacted]`: stop decisions stay the same, but evidence for calls made before the snapshot says `[redacted]`.
+- **What a snapshot holds.** Version number, step and call counters, calls per tool (for `report()`; see above), running totals, the wall-clock time used so far (only when there is a duration budget), tool names, hashes of recent calls and outcomes, and a few previews of at most 80 characters of recent arguments and text, kept so that evidence and messages read the same after a restore. **What it does not hold:** raw arguments, results, errors, model text, the step history, the options, the last verdict. Hashes are not cryptographic; a short, guessable value could be recovered by hashing candidates, so treat a snapshot as run data, not as public. `guard.snapshot({ redact: true })` replaces the previews with `[redacted]`: stop decisions stay the same, but evidence for calls made before the snapshot says `[redacted]`.
 - **Size.** Bounded by the options, not by the length of the run: the oscillation detector keeps `maxPeriod` calls, the no-progress detector the newest 1024 distinct outcomes (about 31 bytes each), the repeat detector one run, plus `window.size` call hashes (about 31 bytes each) when you set a window. Measured with default options: 831 bytes for a fresh guard, and 33,088 bytes after 1,500 or 6,000 steps that each had a new 2 KB argument, a 3 KB result and 500 characters of text (it stops growing once 1024 outcomes are remembered); raising `oscillation.maxPeriod` to 50 made it 39,292 bytes. Tool names over 256 characters are cut in the snapshot.
-- **Options are not stored; they are fingerprinted.** Functions cannot be saved, so you pass the options again. The snapshot records one fingerprint per group of options (`maxSteps`, `repeatedToolCall`, `oscillation`, `noProgress`, `finishReason`, `budget`, `tools`, and the number of `custom` detectors), and restoring under different options throws a `TypeError` that names the groups, instead of silently behaving differently. Not fingerprinted: `now`, `feedback` and what your custom detectors do. To give a run that hit its limit more room, pass `{ allowLimitChanges: true }` as the third argument: then `maxSteps` and `budget` may differ (and only those).
+- **Options are not stored; they are fingerprinted.** Functions cannot be saved, so you pass the options again. The snapshot records one fingerprint per group of options (`maxSteps`, `repeatedToolCall`, `oscillation`, `noProgress`, `finishReason`, `budget`, `tools`, and the number of `custom` detectors), and restoring under different options throws a `TypeError` that names the groups, instead of silently behaving differently. Not fingerprinted: `now`, `feedback`, `onDecision`, the warning settings (`warnings`, every `warnAt`) and what your custom detectors do. To give a run that hit its limit more room, pass `{ allowLimitChanges: true }` as the third argument: then `maxSteps` and `budget` may differ (and only those).
 - **History.** The raw steps are not in a snapshot, so a restored guard starts with an empty `history`, and custom detectors see only the steps recorded since the restore. `summary().steps` and the detectors keep counting across the restore. `summary().lastVerdict` is `null` until the first `check`.
 - **Wall-clock budgets.** The time used so far is stored as a duration, so the time between saving and restoring is not counted.
 - **Bad snapshots.** An unknown version, a wrong shape, an impossible number or a hostile object (throwing getter, revoked proxy, `__proto__` keys) throws a `TypeError` from `fromJSON`, never a crash later from `check`. Unknown extra keys are ignored.
@@ -372,6 +410,7 @@ interface GuardOptions {
   custom?: CustomDetector | readonly CustomDetector[];
   feedback?: (verdict: StopVerdict, info: { phase: 'check' | 'preflight' }) => string | undefined;
   now?: () => number;                                 // default Date.now
+  onDecision?: (event: { phase: 'check'; verdict: Verdict } | { phase: 'preflight'; verdict: Preflight }) => void;
 }
 
 interface ToolPolicy {
@@ -387,6 +426,8 @@ interface Guard {
   preflight(call: PreflightCall | readonly PreflightCall[]): Preflight;   // would this call trip a rule? changes nothing
   reset(): void;                                      // forget the run, keep the options
   summary(): GuardSummary;                            // counts, totals, per-detector state; JSON-serialisable
+  report(options?: { format?: 'text' }): string;       // short model-safe status block
+  report(options: { format: 'json' }): GuardReport;
   toJSON(): GuardSnapshot;                            // save the run; JSON.stringify(guard) uses it
   snapshot(options?: { redact?: boolean }): GuardSnapshot;
   readonly history: readonly GuardStep[];             // frozen shallow copy (empty after a restore)

@@ -9,14 +9,18 @@ import type { Detector, DetectorContext, DetectorResult } from './detectors/type
 import { isFault } from './explain';
 import { feedbackFor } from './feedback';
 import { buildPendingCalls, buildRecord } from './record';
+import { buildReport, lastStopOf, renderReport } from './report';
 import type { StepRecord } from './record';
 import { SNAPSHOT_VERSION, asAmount, asInt, asNullable, asRecord, asString, fail, field, fingerprint, section } from './snapshot';
+import { ToolTally } from './tally';
 import { ToolPolicies } from './toolPolicy';
 import type {
   CustomDetector,
+  DecisionEvent,
   Guard,
   GuardOptions,
   GuardOptionsFingerprint,
+  GuardReport,
   GuardSnapshot,
   GuardStep,
   GuardSummary,
@@ -25,8 +29,10 @@ import type {
   Preflight,
   PreflightCall,
   PreflightStopVerdict,
+  ReportOptions,
   RestoreOptions,
   SnapshotOptions,
+  StopReason,
   StopVerdict,
   Verdict,
 } from './types';
@@ -77,6 +83,11 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
   const warningsOff = options.warnings === false;
   const warnByDefault = options.warnings === true;
 
+  if (options.onDecision !== undefined && typeof options.onDecision !== 'function') {
+    throw new TypeError(`agent-loopguard: onDecision must be a function, got ${String(options.onDecision)}`);
+  }
+  const onDecision = options.onDecision;
+
   const policies = new ToolPolicies(options.tools);
   const maxSteps = options.maxSteps === false ? undefined : new MaxStepsDetector(options.maxSteps ?? DEFAULT_MAX_STEPS);
   const repeated = options.repeatedToolCall === false ? undefined : new RepeatedToolCallDetector(options.repeatedToolCall, policies, warnByDefault);
@@ -112,6 +123,40 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
   let toolCalls = 0;
   let failedToolCalls = 0;
   let lastVerdict: Verdict | null = null;
+  let lastStop: { reason: StopReason; code: string } | null = null;
+  const tally = new ToolTally();
+  // True while `onDecision` runs: the guard has finished the decision it is reporting and must not start another.
+  let notifying = false;
+
+  function notRunning(method: string): void {
+    if (notifying) {
+      throw new Error(
+        `agent-loopguard: guard.${method}() cannot be called from inside onDecision; the guard is still reporting a decision. Call it after the hook returns.`,
+      );
+    }
+  }
+
+  /** Tell `onDecision` what was decided. It gets a copy and cannot affect the guard; whatever it throws is dropped. */
+  function notify(event: DecisionEvent): void {
+    if (onDecision === undefined) return;
+    notifying = true;
+    try {
+      let copy: DecisionEvent = event;
+      try {
+        copy = structuredClone(event);
+      } catch {
+        // Custom evidence that cannot be copied (a function, say): hand over the event itself.
+      }
+      const returned: unknown = onDecision(copy);
+      if (typeof returned === 'object' && returned !== null && typeof (returned as { then?: unknown }).then === 'function') {
+        (returned as PromiseLike<unknown>).then(undefined, () => undefined);
+      }
+    } catch {
+      // Observability only: a failing hook must not break the run.
+    } finally {
+      notifying = false;
+    }
+  }
 
   /** Add the model-facing text to a fault verdict: the `feedback` option's answer, else the default. */
   function withFeedback(stop: StopVerdict): StopVerdict {
@@ -122,6 +167,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
   }
 
   function check(step: GuardStep): Verdict {
+    notRunning('check');
     // Steps often come straight from provider responses; tolerate non-objects.
     const safe: GuardStep = typeof step === 'object' && step !== null ? step : {};
     const record = buildRecord(safe, stepCount);
@@ -134,6 +180,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
     totals.costUsd += record.costUsd ?? 0;
     totals.durationMs += record.durationMs ?? 0;
     toolCalls += record.calls.length;
+    for (const c of record.calls) tally.add(c.name);
     failedToolCalls += record.calls.filter((c) => c.failed).length;
 
     const scopedRecord: StepRecord = policies.hasIgnored
@@ -159,10 +206,19 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
       verdict = warnings.length > 0 ? { stop: false, warnings } : { stop: false };
     }
     lastVerdict = verdict;
+    lastStop = lastStopOf(verdict) ?? lastStop;
+    notify({ phase: 'check', verdict });
     return verdict;
   }
 
   function preflight(input: PreflightCall | readonly PreflightCall[]): Preflight {
+    notRunning('preflight');
+    const result = decide(input);
+    notify({ phase: 'preflight', verdict: result });
+    return result;
+  }
+
+  function decide(input: PreflightCall | readonly PreflightCall[]): Preflight {
     const pending = buildPendingCalls(input);
     const scoped = policies.hasIgnored ? pending.filter((c) => !policies.isIgnored(c.name)) : pending;
     const budgetNow = budget?.peek(totals);
@@ -187,12 +243,15 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
   }
 
   function reset(): void {
+    notRunning('reset');
     history = [];
     stepCount = 0;
     totals = zeroTotals();
     toolCalls = 0;
     failedToolCalls = 0;
     lastVerdict = null;
+    lastStop = null;
+    tally.reset();
     for (const { detector } of detectors) detector.reset();
   }
 
@@ -215,6 +274,21 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
     };
   }
 
+  function report(reportOptions?: ReportOptions): string | GuardReport {
+    const tallied = tally.entries();
+    const data = buildReport({
+      steps: stepCount,
+      toolCalls,
+      failedToolCalls,
+      tools: tallied.tools,
+      other: tallied.other,
+      warnings: lastVerdict?.warnings ?? [],
+      lastStop,
+    });
+    // Tolerate anything for `options`, like `snapshot`: only the literal 'json' asks for the object.
+    return typeof reportOptions === 'object' && reportOptions !== null && reportOptions.format === 'json' ? data : renderReport(data);
+  }
+
   /** One fingerprint per option group; a snapshot is only restored under the options it was taken with. */
   function fingerprints(): GuardOptionsFingerprint {
     return {
@@ -232,6 +306,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
   function snapshot(snapshotOptions?: SnapshotOptions): GuardSnapshot {
     // `JSON.stringify(guard)` calls `toJSON` with a key, so tolerate anything here.
     const redact = typeof snapshotOptions === 'object' && snapshotOptions !== null && snapshotOptions.redact === true;
+    const callsByTool = tally.snapshot();
     return {
       version: SNAPSHOT_VERSION,
       steps: stepCount,
@@ -239,6 +314,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
       failedToolCalls,
       totals: { ...totals },
       wallClockMs: budget ? budget.elapsedMs() : null,
+      ...(callsByTool === undefined ? {} : { callsByTool }),
       options: fingerprints(),
       detectors: {
         repeatedToolCall: repeated ? repeated.snapshot(redact) : null,
@@ -273,6 +349,9 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
     };
     const wallClockMs = asNullable(field(top, 'wallClockMs', 'snapshot'), (v) => asAmount(v, 'snapshot.wallClockMs'));
 
+    // Absent in snapshots from 0.2.0, which means nothing was counted.
+    const callsByTool = Object.prototype.hasOwnProperty.call(top, 'callsByTool') ? top['callsByTool'] : undefined;
+
     // The options are not stored, only their fingerprints: refuse to continue under different rules.
     const stored = asRecord(field(top, 'options', 'snapshot'), 'snapshot.options');
     const current = fingerprints();
@@ -298,6 +377,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
     load('finishReason', finish);
     load('toolLimits', toolLimit);
 
+    tally.restore(callsByTool, calls);
     stepCount = steps;
     toolCalls = calls;
     failedToolCalls = failed;
@@ -322,6 +402,7 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
     toJSON: () => snapshot(),
     snapshot,
     summary,
+    report: report as Guard['report'],
     get history(): readonly GuardStep[] {
       return Object.freeze([...history]);
     },

@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createGuard, restoreGuard } from '../src/index';
-import type { GuardOptions, GuardStep, Verdict } from '../src/index';
+import type { Guard, GuardOptions, GuardReport, GuardStep, Verdict } from '../src/index';
 import { plainStep } from './generators';
 import { mulberry32 } from './helpers';
 
@@ -15,6 +15,12 @@ interface Clock {
 }
 
 const STEPS = 70;
+
+/** The report minus what a restore legitimately does not carry: the last verdict's warnings and the last stop. */
+function portableReport(guard: Guard): Omit<GuardReport, 'warnings' | 'lastStop'> {
+  const { warnings: _warnings, lastStop: _lastStop, ...rest } = guard.report({ format: 'json' });
+  return rest;
+}
 
 /** One configuration the property is checked under. */
 interface Config {
@@ -95,6 +101,8 @@ function runDifferential(config: Config, seeds = 14): { stops: number; restoredR
     const control = createGuard(config.options(clockControl));
     const verdicts: Verdict[] = [];
     const summaries = [a.summary()];
+    const reports = [portableReport(a)];
+    const referenceWarnings = [a.report({ format: 'json' }).warnings];
     const snapshots = [a.toJSON()];
     trace.forEach((s, i) => {
       clockA.t = i * 7;
@@ -104,6 +112,8 @@ function runDifferential(config: Config, seeds = 14): { stops: number; restoredR
       expect(control.check(s)).toEqual(verdict);
       verdicts.push(verdict);
       summaries.push(a.summary());
+      reports.push(portableReport(a));
+      referenceWarnings.push(a.report({ format: 'json' }).warnings);
       snapshots.push(a.toJSON());
     });
     expect(snapshots[STEPS]).toEqual(control.toJSON());
@@ -124,12 +134,16 @@ function runDifferential(config: Config, seeds = 14): { stops: number; restoredR
         // Right after the restore: the same state (the last verdict is not carried over).
         expect(b.toJSON(), label).toEqual(snapshots[k]);
         expect({ ...b.summary(), lastVerdict: null }, label).toEqual({ ...summaries[k], lastVerdict: null });
+        expect(portableReport(b), label).toEqual(reports[k]);
 
         for (let j = k; j < STEPS; j += 1) {
           clockB.t = j * 7;
           const got = b.check(trace[j] as GuardStep);
           expect(got, `${label}, step ${j}`).toEqual(verdicts[j]);
           expect(b.summary(), `${label}, step ${j}`).toEqual(summaries[j + 1]);
+          expect(portableReport(b), `${label}, step ${j}`).toEqual(reports[j + 1]);
+          // The warnings of the last verdict are there again after the first step of the restored guard.
+          expect(b.report({ format: 'json' }).warnings, `${label}, step ${j}`).toEqual(referenceWarnings[j + 1]);
           if (got.stop) stops += 1;
           if (got.warnings?.some((w) => w.code !== 'BUDGET_WARNING')) warned += 1;
         }

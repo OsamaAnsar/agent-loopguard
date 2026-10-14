@@ -470,7 +470,20 @@ export interface GuardOptions {
   feedback?: (verdict: StopVerdict, info: { phase: FeedbackPhase }) => string | undefined;
   /** Clock used for wall-clock duration budgets. Default `Date.now`. */
   now?: () => number;
+  /**
+   * Called after every `check` and every `preflight` with what the guard decided, for logging and
+   * metrics. It cannot change anything: it gets a copy, an exception it throws is swallowed (so is a
+   * rejected promise it returns), and calling `check`, `preflight` or `reset` on the same guard from
+   * inside it throws an `Error`. Reading the guard (`summary`, `report`, `toJSON`) is fine. The
+   * function is not part of the snapshot fingerprint.
+   */
+  onDecision?: (event: DecisionEvent) => void;
 }
+
+/** What `onDecision` is told: the verdict of a `check`, or the answer to a `preflight`. */
+export type DecisionEvent =
+  | { phase: 'check'; verdict: Verdict }
+  | { phase: 'preflight'; verdict: Preflight };
 
 // ---------------------------------------------------------------------------
 // Guard
@@ -648,6 +661,8 @@ export interface GuardSnapshot {
   totals: GuardTotals;
   /** Milliseconds of wall-clock time elapsed when the snapshot was taken; `null` without a duration budget. */
   wallClockMs: number | null;
+  /** Calls per tool, for `report()`. Present once a call has been recorded; snapshots from 0.2.0 do not have it. */
+  callsByTool?: ToolTallySnapshot;
   options: GuardOptionsFingerprint;
   /** `null` for a detector that is disabled. */
   detectors: {
@@ -658,6 +673,12 @@ export interface GuardSnapshot {
     /** Calls so far for each tool with a `maxCalls`, in configuration order; `null` when no tool has one. */
     toolLimits: Array<{ tool: string; calls: number }> | null;
   };
+}
+
+/** Calls per tool, bounded: at most 32 tool names are counted by name, the rest are summed in `other`. */
+export interface ToolTallySnapshot {
+  tools: Array<{ tool: string; calls: number }>;
+  other: number;
 }
 
 export interface SnapshotOptions {
@@ -676,6 +697,26 @@ export interface RestoreOptions {
    * Default `false`.
    */
   allowLimitChanges?: boolean;
+}
+
+/** What `guard.report({ format: 'json' })` returns: the facts behind the text report, model-safe like it. */
+export interface GuardReport {
+  steps: number;
+  toolCalls: number;
+  failedToolCalls: number;
+  /** Calls per tool, most called first (ties by name). Only tool names that look like identifiers; see `otherToolCalls`. */
+  callsByTool: Array<{ tool: string; calls: number }>;
+  /** Calls not listed by name: unusual names, and names beyond the first 32. */
+  otherToolCalls: number;
+  /** The warnings of the most recent verdict, worded for the model. */
+  warnings: Array<{ code: WarningCode; message: string }>;
+  /** The most recent stop this guard returned, if any: its reason and code (a custom code is shown only if it looks like an identifier). */
+  lastStop: { reason: StopReason; code: string } | null;
+}
+
+export interface ReportOptions {
+  /** `'text'` (default) for a short block to paste into the model's context, or `'json'` for a plain object. */
+  format?: 'text' | 'json';
 }
 
 export interface Guard {
@@ -700,6 +741,15 @@ export interface Guard {
   snapshot(options?: SnapshotOptions): GuardSnapshot;
   /** Counts, totals and per-detector state. Contains nothing time-dependent. */
   summary(): GuardSummary;
+  /**
+   * A short, deterministic status block (steps, calls per tool, the warnings of the last verdict, the
+   * last stop) meant to be pasted into the model's context. It is built from counts, fixed wording and
+   * tool names that look like identifiers only: never arguments, results or text. Pass
+   * `{ format: 'json' }` for the same facts as a `GuardReport`. Does not change the guard.
+   */
+  report(options?: { format?: 'text' }): string;
+  report(options: { format: 'json' }): GuardReport;
+  report(options?: ReportOptions): string | GuardReport;
   /**
    * Frozen shallow copy of the steps recorded so far by this guard object. A guard restored from a
    * snapshot starts with an empty history: the raw steps are not part of a snapshot.
