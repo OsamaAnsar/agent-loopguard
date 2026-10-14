@@ -1,4 +1,5 @@
 import type { StepRecord } from '../record';
+import { MAX_NAME_LENGTH, asInt, asList, asRecord, asString, fail, field } from '../snapshot';
 import type { ToolPolicies } from '../toolPolicy';
 import type { ToolLimitEvidence, ToolLimitVerdict } from '../types';
 import type { Detector, DetectorResult } from './types';
@@ -62,6 +63,27 @@ export class ToolLimitDetector implements Detector {
       }
     }
     return undefined;
+  }
+
+  snapshot(): Array<{ tool: string; calls: number }> {
+    return [...this.limits.keys()].map((tool) => ({ tool, calls: this.counts.get(tool) ?? 0 }));
+  }
+
+  restore(raw: unknown): void {
+    const path = 'detectors.toolLimits';
+    const tools = [...this.limits.keys()];
+    const entries = asList(raw, path, tools.length);
+    if (entries.length !== tools.length) fail(path, `must have one entry for each of the ${tools.length} capped tools`);
+    const counts = new Map<string, number>();
+    entries.forEach((entry, i) => {
+      const where = `${path}[${i}]`;
+      const record = asRecord(entry, where);
+      const tool = asString(field(record, 'tool', where), `${where}.tool`, MAX_NAME_LENGTH);
+      if (tool !== tools[i]) fail(`${where}.tool`, 'is not the tool capped at that position in the options');
+      counts.set(tool, asInt(field(record, 'calls', where), `${where}.calls`));
+    });
+    this.counts.clear();
+    for (const [tool, calls] of counts) this.counts.set(tool, calls);
   }
 
   state(): Array<{ tool: string; limit: number; calls: number }> {

@@ -1,5 +1,19 @@
 import type { CallRecord, StepRecord } from '../record';
-import type { OscillationEvidence, OscillationOptions, OscillationVerdict } from '../types';
+import {
+  MAX_LABEL_LENGTH,
+  MAX_NAME_LENGTH,
+  REDACTED,
+  asHash,
+  asInt,
+  asList,
+  asNullable,
+  asRecord,
+  asString,
+  clip,
+  fail,
+  field,
+} from '../snapshot';
+import type { OscillationEvidence, OscillationOptions, OscillationSnapshot, OscillationVerdict } from '../types';
 import type { Detector, DetectorResult } from './types';
 import { assertInteger } from './types';
 
@@ -129,6 +143,61 @@ export class OscillationDetector implements Detector {
       };
     }
     return undefined;
+  }
+
+  /** The resolved options, for the snapshot fingerprint. */
+  config(): { maxPeriod: number; repeats: number } {
+    return { maxPeriod: this.maxPeriod, repeats: this.repeats };
+  }
+
+  snapshot(redact: boolean): OscillationSnapshot {
+    const ring = this.ring;
+    return {
+      sigs: [...ring.sigs],
+      labels: ring.labels.map((label, i) =>
+        redact ? `${ring.names[i] as string}(${REDACTED})` : clip(label, MAX_LABEL_LENGTH),
+      ),
+      names: ring.names.map((name) => clip(name, MAX_NAME_LENGTH)),
+      matches: [...ring.matches],
+      current: this.current === null ? null : { ...this.current },
+    };
+  }
+
+  restore(raw: unknown): void {
+    const path = 'detectors.oscillation';
+    const state = asRecord(raw, path);
+    const sigs = asList(field(state, 'sigs', path), `${path}.sigs`, this.maxPeriod).map((v, i) =>
+      asHash(v, `${path}.sigs[${i}]`),
+    );
+    const labels = asList(field(state, 'labels', path), `${path}.labels`, this.maxPeriod).map((v, i) =>
+      asString(v, `${path}.labels[${i}]`, MAX_LABEL_LENGTH),
+    );
+    const names = asList(field(state, 'names', path), `${path}.names`, this.maxPeriod).map((v, i) =>
+      asString(v, `${path}.names[${i}]`, MAX_NAME_LENGTH),
+    );
+    const matches = asList(field(state, 'matches', path), `${path}.matches`, this.maxPeriod - 1).map((v, i) =>
+      asInt(v, `${path}.matches[${i}]`),
+    );
+    const current = asNullable(field(state, 'current', path), (v) => {
+      const where = `${path}.current`;
+      const c = asRecord(v, where);
+      const period = asInt(field(c, 'period', where), `${where}.period`);
+      const repeats = asInt(field(c, 'repeats', where), `${where}.repeats`);
+      if (period < 2 || period > this.maxPeriod) fail(`${where}.period`, 'must be between 2 and maxPeriod');
+      return { period, repeats };
+    });
+
+    if (labels.length !== sigs.length || names.length !== sigs.length) fail(path, 'has rings of different lengths');
+    if (matches.length !== this.maxPeriod - 1) {
+      fail(`${path}.matches`, `must have exactly ${this.maxPeriod - 1} entries`);
+    }
+    // A counter above zero means that many calls matched the call `period` places earlier.
+    if (matches.some((m, i) => m > 0 && sigs.length < i + 2)) {
+      fail(`${path}.matches`, 'counts calls that are not in the ring');
+    }
+
+    this.ring = { sigs, labels, names, matches };
+    this.current = current;
   }
 
   state(): { maxPeriod: number; repeats: number; current: { period: number; repeats: number } | null } {

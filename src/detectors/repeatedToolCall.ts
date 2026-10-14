@@ -1,6 +1,25 @@
 import type { CallRecord, StepRecord } from '../record';
+import {
+  MAX_NAME_LENGTH,
+  MAX_PREVIEW_LENGTH,
+  REDACTED,
+  asHash,
+  asInt,
+  asList,
+  asNullable,
+  asRecord,
+  asString,
+  clip,
+  fail,
+  field,
+} from '../snapshot';
 import type { ToolPolicies } from '../toolPolicy';
-import type { RepeatedToolCallEvidence, RepeatedToolCallOptions, RepeatedToolCallVerdict } from '../types';
+import type {
+  RepeatedToolCallEvidence,
+  RepeatedToolCallOptions,
+  RepeatedToolCallSnapshot,
+  RepeatedToolCallVerdict,
+} from '../types';
 import type { Detector, DetectorResult } from './types';
 import { assertInteger } from './types';
 
@@ -117,6 +136,51 @@ export class RepeatedToolCallDetector implements Detector {
       return { threshold: policy.pollingThreshold ?? policy.repeatThreshold ?? this.threshold, identicalResults: true };
     }
     return { threshold: policy?.repeatThreshold ?? this.threshold, identicalResults: this.requireIdenticalResults };
+  }
+
+  /** The resolved options, for the snapshot fingerprint. */
+  config(): { threshold: number; requireIdenticalResults: boolean; ignoreErrors: boolean } {
+    return {
+      threshold: this.threshold,
+      requireIdenticalResults: this.requireIdenticalResults,
+      ignoreErrors: this.ignoreErrors,
+    };
+  }
+
+  snapshot(redact: boolean): RepeatedToolCallSnapshot {
+    const run = this.run;
+    return {
+      key: run.length === 0 ? null : (run.key ?? null),
+      tool: clip(run.tool, MAX_NAME_LENGTH),
+      preview: redact && run.preview !== '' ? REDACTED : clip(run.preview, MAX_PREVIEW_LENGTH),
+      length: run.length,
+      steps: [...run.steps],
+      longest: this.longest,
+    };
+  }
+
+  restore(raw: unknown): void {
+    const path = 'detectors.repeatedToolCall';
+    const state = asRecord(raw, path);
+    const key = asNullable(field(state, 'key', path), (v) => asHash(v, `${path}.key`));
+    const tool = asString(field(state, 'tool', path), `${path}.tool`, MAX_NAME_LENGTH);
+    const preview = asString(field(state, 'preview', path), `${path}.preview`, MAX_PREVIEW_LENGTH);
+    const length = asInt(field(state, 'length', path), `${path}.length`);
+    const steps = asList(field(state, 'steps', path), `${path}.steps`, MAX_STEP_INDEXES).map((v, i) =>
+      asInt(v, `${path}.steps[${i}]`),
+    );
+    const longest = asInt(field(state, 'longest', path), `${path}.longest`);
+
+    if (length === 0 ? key !== null || steps.length !== 0 : key === null || steps.length === 0 || steps.length > length) {
+      fail(path, 'has a run whose key, length and steps disagree');
+    }
+    if (steps.some((v, i) => i > 0 && v <= (steps[i - 1] as number))) {
+      fail(`${path}.steps`, 'must be strictly increasing');
+    }
+    if (longest < length) fail(`${path}.longest`, 'must be at least the length of the current run');
+
+    this.run = length === 0 || key === null ? emptyRun() : { key, tool, preview, length, steps, ...this.ruleFor(tool) };
+    this.longest = longest;
   }
 
   state(): { threshold: number; currentRun: { tool: string; length: number } | null; longestRun: number } {

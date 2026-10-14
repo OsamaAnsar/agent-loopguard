@@ -10,11 +10,14 @@ import { isFault } from './explain';
 import { feedbackFor } from './feedback';
 import { buildPendingCalls, buildRecord } from './record';
 import type { StepRecord } from './record';
+import { SNAPSHOT_VERSION, asAmount, asInt, asNullable, asRecord, asString, fail, field, fingerprint, section } from './snapshot';
 import { ToolPolicies } from './toolPolicy';
 import type {
   CustomDetector,
   Guard,
   GuardOptions,
+  GuardOptionsFingerprint,
+  GuardSnapshot,
   GuardStep,
   GuardSummary,
   GuardTotals,
@@ -22,6 +25,8 @@ import type {
   Preflight,
   PreflightCall,
   PreflightStopVerdict,
+  RestoreOptions,
+  SnapshotOptions,
   StopVerdict,
   Verdict,
 } from './types';
@@ -56,20 +61,13 @@ function zeroTotals(): GuardTotals {
   return { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0, durationMs: 0 };
 }
 
-/**
- * Create a guard. Feed it one step at a time with `check`; it answers `{ stop: false }` or a
- * typed verdict saying why the run should end.
- *
- * Detectors run in this order and the first stop wins: finish reason, budget, max steps, tool
- * limit, repeated tool call, oscillation, no progress, then custom detectors. All of them see
- * every step even after one has stopped, so their state stays consistent.
- *
- * Tools with `ignore: true` in `options.tools` are removed from the calls the tool-limit,
- * repeated-call, oscillation and no-progress detectors see.
- *
- * Invalid options throw a `TypeError` here, never later from `check`.
- */
-export function createGuard(options: GuardOptions = {}): Guard {
+/** A snapshot waiting to be loaded into a new guard. */
+interface Restore {
+  snapshot: unknown;
+  allowLimitChanges: boolean;
+}
+
+function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard {
   const now = options.now ?? Date.now;
 
   const policies = new ToolPolicies(options.tools);
@@ -99,7 +97,10 @@ export function createGuard(options: GuardOptions = {}): Guard {
   ];
   const detectors = optional.filter((d): d is { detector: Detector; scoped: boolean } => d.detector !== undefined);
 
+  // Raw steps recorded by this guard object. `stepCount` is the run's step count: it also covers
+  // steps recorded before a restore, which are no longer available as raw steps.
   let history: GuardStep[] = [];
+  let stepCount = 0;
   let totals = zeroTotals();
   let toolCalls = 0;
   let failedToolCalls = 0;
@@ -116,7 +117,8 @@ export function createGuard(options: GuardOptions = {}): Guard {
   function check(step: GuardStep): Verdict {
     // Steps often come straight from provider responses; tolerate non-objects.
     const safe: GuardStep = typeof step === 'object' && step !== null ? step : {};
-    const record = buildRecord(safe, history.length);
+    const record = buildRecord(safe, stepCount);
+    stepCount += 1;
     history.push(safe);
 
     totals.inputTokens += record.inputTokens ?? 0;
@@ -161,7 +163,7 @@ export function createGuard(options: GuardOptions = {}): Guard {
       budgetNow?.stop ??
       maxSteps?.peek() ??
       toolLimit?.peek(scoped) ??
-      repeated?.peek(scoped, history.length) ??
+      repeated?.peek(scoped, stepCount) ??
       oscillation?.peek(scoped);
 
     if (found === undefined) {
@@ -176,6 +178,7 @@ export function createGuard(options: GuardOptions = {}): Guard {
 
   function reset(): void {
     history = [];
+    stepCount = 0;
     totals = zeroTotals();
     toolCalls = 0;
     failedToolCalls = 0;
@@ -185,7 +188,7 @@ export function createGuard(options: GuardOptions = {}): Guard {
 
   function summary(): GuardSummary {
     return {
-      steps: history.length,
+      steps: stepCount,
       toolCalls,
       failedToolCalls,
       totals: { ...totals },
@@ -202,13 +205,153 @@ export function createGuard(options: GuardOptions = {}): Guard {
     };
   }
 
+  /** One fingerprint per option group; a snapshot is only restored under the options it was taken with. */
+  function fingerprints(): GuardOptionsFingerprint {
+    return {
+      maxSteps: fingerprint(maxSteps ? maxSteps.config() : false),
+      repeatedToolCall: fingerprint(repeated ? repeated.config() : false),
+      oscillation: fingerprint(oscillation ? oscillation.config() : false),
+      noProgress: fingerprint(noProgress ? noProgress.config() : false),
+      finishReason: fingerprint(finish ? finish.config() : false),
+      budget: fingerprint(budget ? budget.config() : false),
+      tools: fingerprint(policies.config()),
+      custom: fingerprint(customFns.length),
+    };
+  }
+
+  function snapshot(snapshotOptions?: SnapshotOptions): GuardSnapshot {
+    // `JSON.stringify(guard)` calls `toJSON` with a key, so tolerate anything here.
+    const redact = typeof snapshotOptions === 'object' && snapshotOptions !== null && snapshotOptions.redact === true;
+    return {
+      version: SNAPSHOT_VERSION,
+      steps: stepCount,
+      toolCalls,
+      failedToolCalls,
+      totals: { ...totals },
+      wallClockMs: budget ? budget.elapsedMs() : null,
+      options: fingerprints(),
+      detectors: {
+        repeatedToolCall: repeated ? repeated.snapshot(redact) : null,
+        oscillation: oscillation ? oscillation.snapshot(redact) : null,
+        noProgress: noProgress ? noProgress.snapshot(redact) : null,
+        finishReason: finish ? finish.snapshot() : null,
+        toolLimits: toolLimit ? toolLimit.snapshot() : null,
+      },
+    };
+  }
+
+  /** Load a snapshot into this (fresh) guard. Throws a `TypeError` if it cannot be trusted. */
+  function applySnapshot(raw: unknown, allowLimitChanges: boolean): void {
+    const top = asRecord(raw, 'snapshot');
+    const version = field(top, 'version', 'snapshot');
+    if (version !== SNAPSHOT_VERSION) {
+      const shown = typeof version === 'number' || typeof version === 'string' ? JSON.stringify(version) : typeof version;
+      fail('snapshot.version', `is ${shown}, but this version of agent-loopguard reads version ${SNAPSHOT_VERSION}`);
+    }
+
+    const steps = asInt(field(top, 'steps', 'snapshot'), 'snapshot.steps');
+    const calls = asInt(field(top, 'toolCalls', 'snapshot'), 'snapshot.toolCalls');
+    const failed = asInt(field(top, 'failedToolCalls', 'snapshot'), 'snapshot.failedToolCalls');
+    if (failed > calls) fail('snapshot.failedToolCalls', 'cannot exceed toolCalls');
+    const rawTotals = asRecord(field(top, 'totals', 'snapshot'), 'snapshot.totals');
+    const restoredTotals: GuardTotals = {
+      inputTokens: asAmount(field(rawTotals, 'inputTokens', 'snapshot.totals'), 'snapshot.totals.inputTokens'),
+      outputTokens: asAmount(field(rawTotals, 'outputTokens', 'snapshot.totals'), 'snapshot.totals.outputTokens'),
+      totalTokens: asAmount(field(rawTotals, 'totalTokens', 'snapshot.totals'), 'snapshot.totals.totalTokens'),
+      costUsd: asAmount(field(rawTotals, 'costUsd', 'snapshot.totals'), 'snapshot.totals.costUsd'),
+      durationMs: asAmount(field(rawTotals, 'durationMs', 'snapshot.totals'), 'snapshot.totals.durationMs'),
+    };
+    const wallClockMs = asNullable(field(top, 'wallClockMs', 'snapshot'), (v) => asAmount(v, 'snapshot.wallClockMs'));
+
+    // The options are not stored, only their fingerprints: refuse to continue under different rules.
+    const stored = asRecord(field(top, 'options', 'snapshot'), 'snapshot.options');
+    const current = fingerprints();
+    const relaxed: ReadonlyArray<keyof GuardOptionsFingerprint> = allowLimitChanges ? ['maxSteps', 'budget'] : [];
+    const changed = (Object.keys(current) as Array<keyof GuardOptionsFingerprint>).filter(
+      (key) => !relaxed.includes(key) && asString(field(stored, key, 'snapshot.options'), `snapshot.options.${key}`, 64) !== current[key],
+    );
+    if (changed.length > 0) {
+      throw new TypeError(
+        `agent-loopguard: this snapshot was taken with different options (${changed.join(', ')}); restore it with the options it was taken with`,
+      );
+    }
+
+    // Each detector that is on gets its section; the section of one that is off must be null.
+    const states = asRecord(field(top, 'detectors', 'snapshot'), 'snapshot.detectors');
+    const load = (key: string, detector: { restore(raw: unknown): void } | undefined): void => {
+      const state = section(states, key, detector !== undefined);
+      detector?.restore(state);
+    };
+    load('repeatedToolCall', repeated);
+    load('oscillation', oscillation);
+    load('noProgress', noProgress);
+    load('finishReason', finish);
+    load('toolLimits', toolLimit);
+
+    stepCount = steps;
+    toolCalls = calls;
+    failedToolCalls = failed;
+    totals = restoredTotals;
+    maxSteps?.restore(steps);
+    budget?.restore(restoredTotals, wallClockMs);
+  }
+
+  if (restored !== undefined) {
+    try {
+      applySnapshot(restored.snapshot, restored.allowLimitChanges);
+    } catch (error) {
+      if (error instanceof TypeError) throw error;
+      throw new TypeError('agent-loopguard: invalid snapshot: it could not be read');
+    }
+  }
+
   return {
     check,
     preflight,
     reset,
+    toJSON: () => snapshot(),
+    snapshot,
     summary,
     get history(): readonly GuardStep[] {
       return Object.freeze([...history]);
     },
   };
 }
+
+/**
+ * Create a guard. Feed it one step at a time with `check`; it answers `{ stop: false }` or a
+ * typed verdict saying why the run should end.
+ *
+ * Detectors run in this order and the first stop wins: finish reason, budget, max steps, tool
+ * limit, repeated tool call, oscillation, no progress, then custom detectors. All of them see
+ * every step even after one has stopped, so their state stays consistent.
+ *
+ * Tools with `ignore: true` in `options.tools` are removed from the calls the tool-limit,
+ * repeated-call, oscillation and no-progress detectors see.
+ *
+ * Invalid options throw a `TypeError` here, never later from `check`.
+ *
+ * `createGuard.fromJSON(snapshot, options)` (also exported as `restoreGuard`) continues a run from
+ * `guard.toJSON()`.
+ */
+export function createGuard(options: GuardOptions = {}): Guard {
+  return buildGuard(options, undefined);
+}
+
+/**
+ * Rebuild a guard from a snapshot (`guard.toJSON()`), so that it goes on exactly where the original
+ * stopped: given the same steps, it gives the same verdicts.
+ *
+ * Pass the same `options` the snapshot was taken with. They are not stored (functions cannot
+ * be), only fingerprinted, so a mismatch throws a `TypeError` naming the option groups that differ
+ * instead of silently behaving differently. `restoreOptions.allowLimitChanges` relaxes that for
+ * `maxSteps` and `budget` only. `now`, `feedback` and the code of custom detectors are not checked.
+ *
+ * Anything wrong with the snapshot (unknown version, wrong shape, hostile values) throws a
+ * `TypeError` here, never later from `check`. `snapshot` may be the result of `JSON.parse`.
+ */
+export function restoreGuard(snapshot: unknown, options: GuardOptions = {}, restoreOptions: RestoreOptions = {}): Guard {
+  return buildGuard(options, { snapshot, allowLimitChanges: restoreOptions?.allowLimitChanges === true });
+}
+
+createGuard.fromJSON = restoreGuard;

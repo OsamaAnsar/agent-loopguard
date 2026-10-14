@@ -3,8 +3,8 @@
  * throw, and every verdict must be well-formed and JSON-serialisable.
  */
 import { describe, expect, it } from 'vitest';
-import { canonicalize, createGuard, explain } from '../src/index';
-import type { GuardOptions, GuardStep, Verdict } from '../src/index';
+import { canonicalize, createGuard, explain, feedbackFor, restoreGuard } from '../src/index';
+import type { Guard, GuardOptions, GuardStep, Preflight, Verdict } from '../src/index';
 import { mulberry32 } from './helpers';
 
 type Rand = () => number;
@@ -114,6 +114,14 @@ const CONFIGS: Array<[string, () => GuardOptions]> = [
   ['budgets with warnings', () => ({ budget: { maxTotalTokens: 5000, maxInputTokens: 3000, maxOutputTokens: 800, maxCostUsd: 1, maxDurationMs: 2000, warnAt: 0.5 }, now: () => 0 })],
   ['finish policy: stop', () => ({ finishReason: { otherPolicy: 'stop', terminal: ['stop', 'end_turn'] } })],
   ['finish policy: continue', () => ({ finishReason: { otherPolicy: 'continue', terminal: [] } })],
+  [
+    'per-tool policies',
+    () => ({
+      repeatedToolCall: { threshold: 2 },
+      tools: { search: { maxCalls: 6 }, read: { polling: { maxIdenticalResults: 3 } }, write: { ignore: true }, x: { repeatThreshold: 2, maxCalls: 0 } },
+    }),
+  ],
+  ['feedback override', () => ({ maxSteps: 40, feedback: (verdict, { phase }) => (verdict.code === 'MAX_STEPS' ? `over (${phase})` : undefined) })],
   ['custom detectors', () => ({ custom: [(history) => (history.length % 17 === 0 ? { stop: true, code: 'EVERY_17TH' } : undefined), () => ({ stop: false })] })],
 ];
 
@@ -125,10 +133,37 @@ function assertWellFormed(verdict: Verdict): void {
     expect(typeof verdict.detail).toBe('string');
     expect(verdict.detail.length).toBeGreaterThan(0);
     expect(verdict.evidence).toBeDefined();
+    if (verdict.feedback !== undefined) expect(typeof verdict.feedback).toBe('string');
+    expect(feedbackFor(verdict) === undefined || typeof feedbackFor(verdict) === 'string').toBe(true);
   }
   const json = JSON.stringify(verdict);
   expect(JSON.parse(json)).toEqual(JSON.parse(JSON.stringify(verdict)));
   expect(typeof explain(verdict)).toBe('string');
+}
+
+function assertPreflightWellFormed(result: Preflight): void {
+  expect(typeof result.allow).toBe('boolean');
+  if (!result.allow) {
+    expect(typeof result.reason).toBe('string');
+    expect(result.code).toMatch(/^[A-Z0-9_]+$/);
+    expect(result.detail.length).toBeGreaterThan(0);
+    expect(typeof result.feedback).toBe('string');
+    expect(result.evidence).toBeDefined();
+  }
+  expect(() => JSON.stringify(result)).not.toThrow();
+}
+
+/** Something a caller might pass to `preflight`: a call, several calls, or complete nonsense. */
+function randomPreflightInput(rand: Rand): unknown {
+  const r = rand();
+  if (r < 0.1) return hostileValue(rand);
+  const one = (): unknown => {
+    const c: Record<string, unknown> = { name: pick(rand, NAMES) };
+    if (rand() < 0.8) c['args'] = rand() < 0.5 ? { q: pick(rand, ['a', 'b', 'c']) } : hostileValue(rand);
+    if (rand() < 0.1) c['result'] = hostileValue(rand);
+    return rand() < 0.05 ? hostileValue(rand) : c;
+  };
+  return r < 0.6 ? one() : Array.from({ length: Math.floor(rand() * 4) }, one);
 }
 
 describe('fuzz: the guard never throws on arbitrary steps', () => {
@@ -171,5 +206,41 @@ describe('fuzz: the guard never throws on arbitrary steps', () => {
     for (let i = 0; i < 2000; i += 1) {
       expect(() => canonicalize(hostileValue(rand))).not.toThrow();
     }
+  });
+});
+
+describe('fuzz: preflight, snapshots and restores never throw on hostile data', () => {
+  it.each(CONFIGS)('%s', (_name, makeOptions) => {
+    let probes = 0;
+    let restores = 0;
+    for (let seed = 1; seed <= 12; seed += 1) {
+      const rand = mulberry32(seed * 6151);
+      let guard: Guard = createGuard(makeOptions());
+      for (let i = 0; i < 90; i += 1) {
+        for (let k = 0; k < 2; k += 1) {
+          assertPreflightWellFormed(guard.preflight(randomPreflightInput(rand) as never));
+          probes += 1;
+        }
+        assertWellFormed(guard.check(randomStep(rand)));
+
+        if (i % 15 === 14) {
+          const redact = rand() < 0.3;
+          const snapshot = guard.snapshot({ redact });
+          // JSON-safe, whatever the steps were made of.
+          const json = JSON.stringify(snapshot);
+          expect(JSON.parse(json)).toEqual(snapshot);
+          expect(structuredClone(snapshot)).toEqual(snapshot);
+          expect(JSON.stringify(guard)).toBe(JSON.stringify(guard.toJSON()));
+          // ...and always restorable, from either form, into a guard that keeps working.
+          const restored = restoreGuard(rand() < 0.5 ? snapshot : JSON.parse(json), makeOptions());
+          restores += 1;
+          expect(restored.toJSON()).toEqual(snapshot);
+          guard = restored;
+        }
+        if (i === 60) guard.reset();
+      }
+    }
+    expect(probes).toBe(12 * 90 * 2);
+    expect(restores).toBe(12 * 6);
   });
 });

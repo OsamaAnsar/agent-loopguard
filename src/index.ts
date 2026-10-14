@@ -1,4 +1,4 @@
-export { createGuard, DEFAULT_MAX_STEPS } from './guard';
+export { createGuard, restoreGuard, DEFAULT_MAX_STEPS } from './guard';
 export { explain, isFault } from './explain';
 export { feedbackFor } from './feedback';
 export { canonicalize, stableHash } from './canonical';
@@ -25,6 +25,9 @@ export type {
   FinishReasonVerdict,
   Guard,
   GuardOptions,
+  GuardOptionsFingerprint,
+  GuardSnapshot,
+  GuardSnapshotVersion,
   GuardStep,
   GuardSummary,
   GuardToolCall,
@@ -35,9 +38,11 @@ export type {
   MaxStepsVerdict,
   NoProgressEvidence,
   NoProgressOptions,
+  NoProgressSnapshot,
   NoProgressVerdict,
   OscillationEvidence,
   OscillationOptions,
+  OscillationSnapshot,
   OscillationVerdict,
   OtherFinishPolicy,
   Preflight,
@@ -47,7 +52,10 @@ export type {
   PreflightStopVerdict,
   RepeatedToolCallEvidence,
   RepeatedToolCallOptions,
+  RepeatedToolCallSnapshot,
   RepeatedToolCallVerdict,
+  RestoreOptions,
+  SnapshotOptions,
   StopReason,
   StopVerdict,
   ToolLimitEvidence,

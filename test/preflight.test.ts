@@ -376,6 +376,7 @@ describe('preflight: input handling', () => {
       [revoked.proxy],
       throwing,
       [throwing, { name: 'fine', args: 1 }],
+      new Proxy([], { get() { throw new Error('hostile iterator'); } }),
       { name: 'circular', args: (() => { const o: Record<string, unknown> = {}; o['self'] = o; return o; })() },
       { name: 'x'.repeat(10_000), args: 'y'.repeat(10_000) },
     ];

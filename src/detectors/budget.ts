@@ -155,6 +155,24 @@ export class BudgetDetector implements Detector {
     return { ...recorded, durationMs: elapsed };
   }
 
+  /** The resolved limits, for the snapshot fingerprint. */
+  config(): Array<{ metric: BudgetMetric; limit: number; warnAt: number | null }> {
+    return this.limits.map(({ metric, limit, warnAt }) => ({ metric, limit, warnAt: warnAt ?? null }));
+  }
+
+  /** Wall-clock time since the run started, or `null` when no duration limit makes it matter. */
+  elapsedMs(): number | null {
+    if (!this.limits.some((l) => l.metric === 'durationMs')) return null;
+    const elapsed = this.now() - this.startedAt;
+    return Number.isFinite(elapsed) && elapsed > 0 ? elapsed : 0;
+  }
+
+  /** Continue a run whose totals were `totals` and which had been running for `elapsedMs`. */
+  restore(totals: Readonly<GuardTotals>, elapsedMs: number | null): void {
+    this.lastUsed = this.recorded(totals);
+    this.startedAt = this.now() - (elapsedMs ?? 0);
+  }
+
   state(): { limits: Partial<Record<BudgetMetric, number>>; used: Record<BudgetMetric, number> } {
     const limits: Partial<Record<BudgetMetric, number>> = {};
     for (const l of this.limits) limits[l.metric] = l.limit;

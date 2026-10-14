@@ -1,5 +1,6 @@
 import { normalizeFinishReason } from '../record';
 import type { StepRecord } from '../record';
+import { MAX_FINISH_REASON_LENGTH, asNullable, asRecord, asString, clip, field } from '../snapshot';
 import type { FinishReasonEvidence, FinishReasonOptions, OtherFinishPolicy } from '../types';
 import type { Detector, DetectorResult } from './types';
 
@@ -97,6 +98,23 @@ export class FinishReasonDetector implements Detector {
 
   state(): { lastFinishReason: string | null } {
     return { lastFinishReason: this.last };
+  }
+
+  /** The resolved options, for the snapshot fingerprint. */
+  config(): { terminal: string[]; otherPolicy: OtherFinishPolicy } {
+    return { terminal: [...this.terminal].sort(), otherPolicy: this.otherPolicy };
+  }
+
+  snapshot(): { lastFinishReason: string | null } {
+    return { lastFinishReason: this.last === null ? null : clip(this.last, MAX_FINISH_REASON_LENGTH) };
+  }
+
+  restore(raw: unknown): void {
+    const path = 'detectors.finishReason';
+    const state = asRecord(raw, path);
+    this.last = asNullable(field(state, 'lastFinishReason', path), (v) =>
+      asString(v, `${path}.lastFinishReason`, MAX_FINISH_REASON_LENGTH),
+    );
   }
 
   reset(): void {

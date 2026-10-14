@@ -441,6 +441,111 @@ export type PreflightStopVerdict =
   | RepeatedToolCallVerdict
   | OscillationVerdict;
 
+// ---------------------------------------------------------------------------
+// Snapshots (save and resume)
+// ---------------------------------------------------------------------------
+
+/** The current snapshot format. A guard only reads snapshots of the version it knows. */
+export type GuardSnapshotVersion = 1;
+
+/**
+ * One short fingerprint per group of options, so a snapshot can tell whether it is being restored
+ * under the options it was taken with. The options themselves are not stored.
+ */
+export interface GuardOptionsFingerprint {
+  maxSteps: string;
+  repeatedToolCall: string;
+  oscillation: string;
+  noProgress: string;
+  finishReason: string;
+  budget: string;
+  tools: string;
+  /** Covers the number of custom detectors, not what they do. */
+  custom: string;
+}
+
+/** The run of identical calls that `repeatedToolCall` is currently counting. */
+export interface RepeatedToolCallSnapshot {
+  /** Hash identifying the repeated call (or call and result); `null` when there is no run. */
+  key: string | null;
+  tool: string;
+  /** Truncated canonical arguments (at most 80 characters), kept so evidence reads the same after a restore. */
+  preview: string;
+  length: number;
+  /** Indexes of the newest steps in the run (at most 10). */
+  steps: number[];
+  longest: number;
+}
+
+/** The newest calls the oscillation rule compares against, as hashes plus short labels. */
+export interface OscillationSnapshot {
+  sigs: string[];
+  /** `tool(argument preview)` for each call in `sigs`. */
+  labels: string[];
+  /** Tool name of each call in `sigs`. */
+  names: string[];
+  matches: number[];
+  current: { period: number; repeats: number } | null;
+}
+
+export interface NoProgressSnapshot {
+  /** Hashes of the most recent distinct tool outcomes, oldest first. */
+  seen: string[];
+  streak: number;
+  /** Hash of the text the current streak shares; `null` when there is no streak. */
+  textKey: string | null;
+  /** Truncated text of the streak (at most 80 characters). */
+  textPreview: string;
+}
+
+/**
+ * Everything a guard needs to carry on a run in another process, as plain JSON-safe data.
+ *
+ * Contains: counters, running totals, elapsed wall-clock time (only when a duration budget exists),
+ * hashes of recent tool calls and outcomes, tool names, and a few truncated previews (at most 80
+ * characters each) of recent arguments and text, so that evidence and messages read the same after a
+ * restore. Does not contain: raw arguments, results, errors, model text, the step history, the
+ * options, or the last verdict. `snapshot({ redact: true })` also replaces the previews.
+ * Hashes are not cryptographic: a short, guessable value could be recovered by trying candidates.
+ */
+export interface GuardSnapshot {
+  version: GuardSnapshotVersion;
+  steps: number;
+  toolCalls: number;
+  failedToolCalls: number;
+  totals: GuardTotals;
+  /** Milliseconds of wall-clock time elapsed when the snapshot was taken; `null` without a duration budget. */
+  wallClockMs: number | null;
+  options: GuardOptionsFingerprint;
+  /** `null` for a detector that is disabled. */
+  detectors: {
+    repeatedToolCall: RepeatedToolCallSnapshot | null;
+    oscillation: OscillationSnapshot | null;
+    noProgress: NoProgressSnapshot | null;
+    finishReason: { lastFinishReason: string | null } | null;
+    /** Calls so far for each tool with a `maxCalls`, in configuration order; `null` when no tool has one. */
+    toolLimits: Array<{ tool: string; calls: number }> | null;
+  };
+}
+
+export interface SnapshotOptions {
+  /**
+   * Replace the argument and text previews in the snapshot with `[redacted]`. Stop decisions stay
+   * identical after a restore, but evidence and messages that quote those previews will say
+   * `[redacted]` for calls made before the snapshot. Default `false`.
+   */
+  redact?: boolean;
+}
+
+export interface RestoreOptions {
+  /**
+   * Allow `maxSteps` and `budget` to differ from the options the snapshot was taken with, for
+   * example to give a run that hit its limit more room. Every other option must still match.
+   * Default `false`.
+   */
+  allowLimitChanges?: boolean;
+}
+
 export interface Guard {
   /** Record a step and decide whether the run should continue. Never throws on odd step data. */
   check(step: GuardStep): Verdict;
@@ -453,8 +558,19 @@ export interface Guard {
   preflight(call: PreflightCall | readonly PreflightCall[]): Preflight;
   /** Forget everything and start a fresh run (options are kept). */
   reset(): void;
+  /**
+   * Plain, JSON-safe state for carrying the run into another process; restore it with
+   * `createGuard.fromJSON`. Does not change the guard. Because it is called `toJSON`,
+   * `JSON.stringify(guard)` gives the same data. See `GuardSnapshot` for what it holds.
+   */
+  toJSON(): GuardSnapshot;
+  /** Same as `toJSON`, with options. */
+  snapshot(options?: SnapshotOptions): GuardSnapshot;
   /** Counts, totals and per-detector state. Contains nothing time-dependent. */
   summary(): GuardSummary;
-  /** Frozen shallow copy of the steps recorded so far. */
+  /**
+   * Frozen shallow copy of the steps recorded so far by this guard object. A guard restored from a
+   * snapshot starts with an empty history: the raw steps are not part of a snapshot.
+   */
   readonly history: readonly GuardStep[];
 }

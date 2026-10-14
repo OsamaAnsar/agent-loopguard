@@ -38,6 +38,16 @@ export class MaxStepsDetector implements Detector {
     };
   }
 
+  /** The resolved options, for the snapshot fingerprint. */
+  config(): { limit: number } {
+    return { limit: this.limit };
+  }
+
+  /** Continue from a run that had already recorded `steps` steps. */
+  restore(steps: number): void {
+    this.steps = steps;
+  }
+
   remaining(): number {
     return Math.max(0, this.limit - this.steps);
   }
