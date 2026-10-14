@@ -337,6 +337,12 @@ export interface OscillationOptions {
   /** Stop when a cycle was seen this many times in a row. Integer >= 2. Default 3. */
   repeats?: number;
   /**
+   * Compare calls together with their results (or errors), so a cycle must bring back the same
+   * outcomes each time to count. Calls without a result compare by the call alone. `preflight` cannot
+   * judge such a cycle before the results exist, so it never refuses on it. Default false: results are ignored.
+   */
+  includeResults?: boolean;
+  /**
    * Early warning: the number of times in a row the cycle has been seen at which it starts (integer
    * from 2 to `repeats - 1`), or `false` for none. Default: `repeats - 1`, when warnings are on.
    */

@@ -51,7 +51,7 @@ Every detector can be tuned or switched off with `false`. All defaults are liste
 | `tools.<name>.maxCalls` | a tool is called more often than its cap allows (the call after the Nth) | no caps unless you set them |
 | `repeatedToolCall` | the same tool is called with canonically-equal arguments N times in a row | `threshold: 3`, `requireIdenticalResults: false`, `ignoreErrors: false`; per tool: `repeatThreshold`, `polling` |
 | `repeatedToolCall.window` | the same call occurs N times among the newest K calls, even with other calls in between (off unless you set it) | no window unless you set `window: { size, maxRepeats }` |
-| `oscillation` | the tail of the tool-call sequence is a cycle of 2..`maxPeriod` calls repeated `repeats` times | `maxPeriod: 3`, `repeats: 3` |
+| `oscillation` | the tail of the tool-call sequence is a cycle of 2..`maxPeriod` calls repeated `repeats` times | `maxPeriod: 3`, `repeats: 3`, `includeResults: false` |
 | `noProgress` | N consecutive steps have the same normalised text and no new tool outcome | `threshold: 3` |
 | `finishReason` | the finish reason is terminal, or is an unfamiliar one under the `otherPolicy` | `terminal: ['stop', 'length', 'content-filter', 'error']`, `otherPolicy: 'stop-if-text-only'` |
 | `budget` | a cumulative token, cost or duration total reaches its limit (and warns before that, if you set `warnAt`) | no limits unless you set them |
@@ -428,7 +428,7 @@ Steps are reduced to comparable facts once, when `check` is called. Anything unu
 
 **`repeatedToolCall.window`.** Keeps the keys (call hashes) of the newest `size` counted calls in a ring buffer with a count per key. Each counted call is added, the oldest one drops out once the window is full, and the rule stops when the added call's key reaches its threshold (`maxRepeats`, or the tool's own number, see above). A run that reaches the threshold in the middle of a step still counts if a later call in the same step slides it out.
 
-**`oscillation`.** For each period `p` from 2 to `maxPeriod`, looks at the end of the call-signature sequence: it stops when the last `p` calls repeat for `repeats` full cycles in a row (`a b a b a b` is period 2, three cycles). A cycle made of one distinct call (`a a a a a a`) is not an oscillation; that is `repeatedToolCall`'s case. Results are not considered.
+**`oscillation`.** For each period `p` from 2 to `maxPeriod`, looks at the end of the call-signature sequence: it stops when the last `p` calls repeat for `repeats` full cycles in a row (`a b a b a b` is period 2, three cycles). A cycle made of one distinct call (`a a a a a a`) is not an oscillation; that is `repeatedToolCall`'s case. Results are not considered, unless you set `includeResults: true`: then the sequence is the outcome signatures (call plus result or error; a call without a result compares by the call alone), so a cycle counts only if the same results come back each time, and an agent that goes `search`, `read`, `search`, `read` while every result is new is not flagged. `preflight` cannot judge that before the results exist, so with `includeResults` it never refuses on a cycle (`check` still stops it). The option is part of the snapshot fingerprint only when it is on.
 
 **`noProgress`.** A step is *stalled* when none of its tool outcomes is new in this run (a step without tool calls is always stalled). It stops after `threshold` consecutive stalled steps that all have the same normalised text (lower-cased, whitespace collapsed; an empty string counts as text, so tool-only steps are judged on outcomes alone). A new outcome, or different text, restarts the count. Because outcomes include the result, the same call returning a new result is progress. Calls of `ignore` tools are not outcomes, so a step that only calls them is stalled. The detector remembers the newest 1024 distinct outcomes; in a run with more than that, an outcome older than the window counts as new again (this bounds memory and snapshot size).
 
@@ -451,7 +451,7 @@ interface GuardOptions {
     threshold?: number; requireIdenticalResults?: boolean; ignoreErrors?: boolean; warnAt?: number | false;
     window?: { size: number; maxRepeats: number; warnAt?: number | false } | false;   // size 2..1000, maxRepeats 2..size; default off
   } | false;
-  oscillation?: { maxPeriod?: number; repeats?: number; warnAt?: number | false } | false;
+  oscillation?: { maxPeriod?: number; repeats?: number; includeResults?: boolean; warnAt?: number | false } | false;
   noProgress?: { threshold?: number; warnAt?: number | false } | false;
   finishReason?: { terminal?: readonly string[]; otherPolicy?: 'stop' | 'continue' | 'stop-if-text-only' } | false;
   budget?: {

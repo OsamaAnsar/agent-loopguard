@@ -92,6 +92,10 @@ const CONFIGS: Config[] = [
     }),
   },
   {
+    name: 'oscillation that compares results, with warnings',
+    options: () => ({ warnings: true, oscillation: { includeResults: true, repeats: 3, maxPeriod: 4 }, repeatedToolCall: { threshold: 6 }, noProgress: { threshold: 6 } }),
+  },
+  {
     name: 'the largest window',
     options: () => ({ maxSteps: false, repeatedToolCall: { window: { size: 1000, maxRepeats: 6 } } }),
   },

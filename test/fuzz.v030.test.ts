@@ -51,6 +51,7 @@ const CONFIGS: Array<[string, () => GuardOptions]> = [
       };
     },
   ],
+  ['oscillation that compares results', () => ({ warnings: true, oscillation: { includeResults: true, repeats: 2 } })],
   ['the largest window', () => ({ maxSteps: false, repeatedToolCall: { window: { size: 1000, maxRepeats: 4 } } })],
 ];
 

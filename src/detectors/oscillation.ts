@@ -57,6 +57,8 @@ export interface OscillationPeek {
 export class OscillationDetector implements Detector {
   readonly maxPeriod: number;
   readonly repeats: number;
+  /** Compare calls together with what came back, not by the call alone. */
+  readonly includeResults: boolean;
 
   private ring: Ring;
   private current: { period: number; repeats: number } | null = null;
@@ -65,6 +67,10 @@ export class OscillationDetector implements Detector {
   constructor(options: OscillationOptions = {}, warnByDefault = false) {
     this.maxPeriod = assertInteger('oscillation.maxPeriod', options.maxPeriod ?? 3, 2);
     this.repeats = assertInteger('oscillation.repeats', options.repeats ?? 3, 2);
+    if (options.includeResults !== undefined && typeof options.includeResults !== 'boolean') {
+      throw new TypeError(`agent-loopguard: oscillation.includeResults must be a boolean, got ${String(options.includeResults)}`);
+    }
+    this.includeResults = options.includeResults ?? false;
     this.warn = resolveWarnAt('oscillation.warnAt', options.warnAt, warnByDefault, 2, this.repeats - 1);
     this.ring = this.emptyRing();
   }
@@ -73,7 +79,7 @@ export class OscillationDetector implements Detector {
     let found: OscillationEvidence | undefined;
 
     for (const call of record.calls) {
-      this.push(this.ring, call);
+      this.push(this.ring, call, this.includeResults ? call.outcomeSig : call.callSig);
       // Check after every call (not just at the end of the step) so a pattern that completes
       // mid-step is not lost if a later call in the same step breaks it.
       found = this.detect(this.ring) ?? found;
@@ -90,7 +96,7 @@ export class OscillationDetector implements Detector {
         stop: true,
         reason: 'oscillation',
         code: 'OSCILLATION',
-        detail: `The agent is oscillating: a cycle of ${found.period} calls (${found.cycle.join(' -> ')}) repeated ${found.repeats} times in a row.`,
+        detail: `The agent is oscillating: a cycle of ${found.period} calls (${found.cycle.join(' -> ')}) repeated ${found.repeats} times in a row${this.includeResults ? ', with the same results each time' : ''}.`,
         evidence: found,
       },
     };
@@ -108,8 +114,9 @@ export class OscillationDetector implements Detector {
       matches: [...this.ring.matches],
     };
     let found: OscillationEvidence | undefined;
-    for (const call of calls) {
-      this.push(ring, call);
+    for (const [i, call] of calls.entries()) {
+      // With results in the comparison, a call that has not run has no outcome that could match anything.
+      this.push(ring, call, this.includeResults ? `pending#${i}` : call.callSig);
       found = this.detect(ring) ?? found;
     }
     if (found === undefined) {
@@ -132,14 +139,14 @@ export class OscillationDetector implements Detector {
     return { sigs: [], labels: [], names: [], matches: new Array<number>(this.maxPeriod - 1).fill(0) };
   }
 
-  private push(ring: Ring, call: CallRecord): void {
+  private push(ring: Ring, call: CallRecord, sig: string): void {
     const n = ring.sigs.length;
     for (let period = 2; period <= this.maxPeriod; period += 1) {
       const slot = period - 2;
-      const matched = n >= period && call.callSig === ring.sigs[n - period];
+      const matched = n >= period && sig === ring.sigs[n - period];
       ring.matches[slot] = matched ? (ring.matches[slot] as number) + 1 : 0;
     }
-    ring.sigs.push(call.callSig);
+    ring.sigs.push(sig);
     ring.labels.push(call.label);
     ring.names.push(call.name);
     if (n >= this.maxPeriod) {
@@ -180,8 +187,8 @@ export class OscillationDetector implements Detector {
   }
 
   /** The resolved options, for the snapshot fingerprint. */
-  config(): { maxPeriod: number; repeats: number } {
-    return { maxPeriod: this.maxPeriod, repeats: this.repeats };
+  config(): { maxPeriod: number; repeats: number; includeResults?: true } {
+    return { maxPeriod: this.maxPeriod, repeats: this.repeats, ...(this.includeResults ? { includeResults: true as const } : {}) };
   }
 
   snapshot(redact: boolean): OscillationSnapshot {
