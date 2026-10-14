@@ -8,6 +8,8 @@ function hint(verdict: StopVerdict): string {
       return 'The model called a tool more often than its maxCalls allows. Raise the limit if the task needs it, or look at why the model keeps going back to this tool.';
     case 'repeated-tool-call':
       return 'The model keeps issuing the same call. Check that the tool result gives it something to act on, and that the prompt says what to do when a tool fails.';
+    case 'repeated-tool-call-window':
+      return 'The model keeps coming back to the same call between other calls. Check that its result gives the model something to act on, and that nothing else in the loop sends it back there.';
     case 'oscillation':
       return 'The model is flipping between the same calls. Look for two tools whose results send the model back to each other.';
     case 'no-progress':

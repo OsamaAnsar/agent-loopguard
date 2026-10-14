@@ -1,0 +1,789 @@
+{
+  "generatedBy": "@osama.ansar/agent-loopguard@0.2.0",
+  "name": "busy",
+  "note": "Budgets (with warnings and a fixed clock), tool caps, polling, ignore, result-aware repeats.",
+  "options": {
+    "maxSteps": 30,
+    "repeatedToolCall": {
+      "threshold": 4,
+      "requireIdenticalResults": true
+    },
+    "oscillation": {
+      "maxPeriod": 4
+    },
+    "budget": {
+      "maxTotalTokens": 500,
+      "maxDurationMs": 60000,
+      "warnAt": 0.8
+    },
+    "tools": {
+      "search": {
+        "maxCalls": 4
+      },
+      "poll": {
+        "polling": {
+          "maxIdenticalResults": 3
+        }
+      },
+      "think": {
+        "ignore": true
+      }
+    },
+    "nowMs": 1000
+  },
+  "before": [
+    {
+      "toolCalls": [
+        {
+          "name": "search",
+          "args": {
+            "q": "a"
+          },
+          "result": 1
+        }
+      ],
+      "text": "one",
+      "usage": {
+        "totalTokens": 60
+      },
+      "finishReason": "tool-calls"
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "think",
+          "args": {
+            "t": 1
+          }
+        },
+        {
+          "name": "poll",
+          "args": {
+            "job": 7
+          },
+          "result": "pending"
+        }
+      ],
+      "text": "two",
+      "usage": {
+        "totalTokens": 60
+      },
+      "finishReason": "tool-calls"
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "poll",
+          "args": {
+            "job": 7
+          },
+          "result": "pending"
+        }
+      ],
+      "text": "three",
+      "usage": {
+        "totalTokens": 60
+      },
+      "durationMs": 40
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read",
+          "args": {
+            "path": "x"
+          },
+          "result": "ok"
+        },
+        {
+          "name": "search",
+          "args": {
+            "q": "b"
+          },
+          "error": "timeout"
+        }
+      ],
+      "text": "four",
+      "usage": {
+        "totalTokens": 60
+      }
+    }
+  ],
+  "snapshot": {
+    "version": 1,
+    "steps": 4,
+    "toolCalls": 6,
+    "failedToolCalls": 1,
+    "totals": {
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 240,
+      "costUsd": 0,
+      "durationMs": 40
+    },
+    "wallClockMs": 0,
+    "options": {
+      "maxSteps": "1fc56d9c041a291978e79e2d5564",
+      "repeatedToolCall": "10afefced78ef212eb2db1363007",
+      "oscillation": "173bfe01962c2716721ede7ac447",
+      "noProgress": "00c3f42e690bc21e291c3468185e",
+      "finishReason": "17450feb9bd7361bf4a7335dbc07",
+      "budget": "1e2d68bb6163ac033f8eaa2c3116",
+      "tools": "17b87e882fd8a30a7088a79c8e06",
+      "custom": "0b2475ab050fb715ff763d115336"
+    },
+    "detectors": {
+      "repeatedToolCall": {
+        "key": "03a050c1834a371e17f2d184d6fc",
+        "tool": "search",
+        "preview": "{\"q\":\"b\"}",
+        "length": 1,
+        "steps": [
+          3
+        ],
+        "longest": 2
+      },
+      "oscillation": {
+        "sigs": [
+          "0213a1e426a82e0370422a312cba",
+          "0213a1e426a82e0370422a312cba",
+          "1b71dd90c45d511b53d91cba9a46",
+          "0c299abbc4c4611f1222d50c7ac4"
+        ],
+        "labels": [
+          "poll({\"job\":7})",
+          "poll({\"job\":7})",
+          "read({\"path\":\"x\"})",
+          "search({\"q\":\"b\"})"
+        ],
+        "names": [
+          "poll",
+          "poll",
+          "read",
+          "search"
+        ],
+        "matches": [
+          0,
+          0,
+          0
+        ],
+        "current": null
+      },
+      "noProgress": {
+        "seen": [
+          "0eeeee0eac92ca1a67e54dabecb4",
+          "118f86ecf7f1430247c14a395e62",
+          "1149626f3675190063a676e63c75",
+          "03a050c1834a371e17f2d184d6fc"
+        ],
+        "streak": 0,
+        "textKey": null,
+        "textPreview": ""
+      },
+      "finishReason": {
+        "lastFinishReason": "tool-calls"
+      },
+      "toolLimits": [
+        {
+          "tool": "search",
+          "calls": 2
+        }
+      ]
+    }
+  },
+  "after": [
+    {
+      "toolCalls": [
+        {
+          "name": "poll",
+          "args": {
+            "job": 7
+          },
+          "result": "pending"
+        }
+      ],
+      "text": "five",
+      "usage": {
+        "totalTokens": 60
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "search",
+          "args": {
+            "q": "c"
+          },
+          "result": 3
+        }
+      ],
+      "text": "six",
+      "usage": {
+        "totalTokens": 60
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "search",
+          "args": {
+            "q": "d"
+          },
+          "result": 4
+        }
+      ],
+      "text": "seven",
+      "usage": {
+        "totalTokens": 60
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "search",
+          "args": {
+            "q": "e"
+          },
+          "result": 5
+        }
+      ],
+      "text": "eight",
+      "usage": {
+        "totalTokens": 60
+      }
+    },
+    {
+      "toolCalls": [],
+      "text": "nine",
+      "usage": {
+        "totalTokens": 60
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read",
+          "args": {
+            "path": "y"
+          },
+          "result": "ok"
+        }
+      ],
+      "text": "ten",
+      "usage": {
+        "totalTokens": 60
+      }
+    }
+  ],
+  "expected": {
+    "verdicts": [
+      {
+        "stop": false
+      },
+      {
+        "stop": false
+      },
+      {
+        "stop": false,
+        "warnings": [
+          {
+            "code": "BUDGET_WARNING",
+            "metric": "totalTokens",
+            "value": 420,
+            "limit": 500,
+            "ratio": 0.84,
+            "detail": "Budget warning: total tokens is at 84% of the 500 allowed (420 used)."
+          }
+        ]
+      },
+      {
+        "stop": true,
+        "reason": "tool-limit",
+        "code": "TOOL_CALL_CAP",
+        "detail": "Tool \"search\" was called 5 times; its limit is 4.",
+        "evidence": {
+          "tool": "search",
+          "calls": 5,
+          "limit": 4
+        },
+        "feedback": "You have called `search` 5 times, more than the 4 allowed for it in this task. Do not call it again; use a different tool, or answer with what you have.",
+        "warnings": [
+          {
+            "code": "BUDGET_WARNING",
+            "metric": "totalTokens",
+            "value": 480,
+            "limit": 500,
+            "ratio": 0.96,
+            "detail": "Budget warning: total tokens is at 96% of the 500 allowed (480 used)."
+          }
+        ]
+      },
+      {
+        "stop": true,
+        "reason": "budget",
+        "code": "BUDGET_TOTAL_TOKENS",
+        "detail": "Budget exhausted: total tokens reached 540 of the 500 allowed.",
+        "evidence": {
+          "metric": "totalTokens",
+          "value": 540,
+          "limit": 500
+        },
+        "feedback": "The token budget for this task has been used up. Do not start any new work; answer with what you have."
+      },
+      {
+        "stop": true,
+        "reason": "budget",
+        "code": "BUDGET_TOTAL_TOKENS",
+        "detail": "Budget exhausted: total tokens reached 600 of the 500 allowed.",
+        "evidence": {
+          "metric": "totalTokens",
+          "value": 600,
+          "limit": 500
+        },
+        "feedback": "The token budget for this task has been used up. Do not start any new work; answer with what you have."
+      }
+    ],
+    "summaries": [
+      {
+        "steps": 5,
+        "toolCalls": 7,
+        "failedToolCalls": 1,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 300,
+          "costUsd": 0,
+          "durationMs": 40
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 30,
+            "remaining": 25
+          },
+          "repeatedToolCall": {
+            "threshold": 4,
+            "currentRun": {
+              "tool": "poll",
+              "length": 1
+            },
+            "longestRun": 2
+          },
+          "oscillation": {
+            "maxPeriod": 4,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 1
+          },
+          "finishReason": {
+            "lastFinishReason": "tool-calls"
+          },
+          "budget": {
+            "limits": {
+              "totalTokens": 500,
+              "durationMs": 60000
+            },
+            "used": {
+              "totalTokens": 300,
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "costUsd": 0,
+              "durationMs": 40
+            }
+          },
+          "toolLimits": [
+            {
+              "tool": "search",
+              "limit": 4,
+              "calls": 2
+            }
+          ]
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 6,
+        "toolCalls": 8,
+        "failedToolCalls": 1,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 360,
+          "costUsd": 0,
+          "durationMs": 40
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 30,
+            "remaining": 24
+          },
+          "repeatedToolCall": {
+            "threshold": 4,
+            "currentRun": {
+              "tool": "search",
+              "length": 1
+            },
+            "longestRun": 2
+          },
+          "oscillation": {
+            "maxPeriod": 4,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 0
+          },
+          "finishReason": {
+            "lastFinishReason": "tool-calls"
+          },
+          "budget": {
+            "limits": {
+              "totalTokens": 500,
+              "durationMs": 60000
+            },
+            "used": {
+              "totalTokens": 360,
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "costUsd": 0,
+              "durationMs": 40
+            }
+          },
+          "toolLimits": [
+            {
+              "tool": "search",
+              "limit": 4,
+              "calls": 3
+            }
+          ]
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 7,
+        "toolCalls": 9,
+        "failedToolCalls": 1,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 420,
+          "costUsd": 0,
+          "durationMs": 40
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 30,
+            "remaining": 23
+          },
+          "repeatedToolCall": {
+            "threshold": 4,
+            "currentRun": {
+              "tool": "search",
+              "length": 1
+            },
+            "longestRun": 2
+          },
+          "oscillation": {
+            "maxPeriod": 4,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 0
+          },
+          "finishReason": {
+            "lastFinishReason": "tool-calls"
+          },
+          "budget": {
+            "limits": {
+              "totalTokens": 500,
+              "durationMs": 60000
+            },
+            "used": {
+              "totalTokens": 420,
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "costUsd": 0,
+              "durationMs": 40
+            }
+          },
+          "toolLimits": [
+            {
+              "tool": "search",
+              "limit": 4,
+              "calls": 4
+            }
+          ]
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 8,
+        "toolCalls": 10,
+        "failedToolCalls": 1,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 480,
+          "costUsd": 0,
+          "durationMs": 40
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 30,
+            "remaining": 22
+          },
+          "repeatedToolCall": {
+            "threshold": 4,
+            "currentRun": {
+              "tool": "search",
+              "length": 1
+            },
+            "longestRun": 2
+          },
+          "oscillation": {
+            "maxPeriod": 4,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 0
+          },
+          "finishReason": {
+            "lastFinishReason": "tool-calls"
+          },
+          "budget": {
+            "limits": {
+              "totalTokens": 500,
+              "durationMs": 60000
+            },
+            "used": {
+              "totalTokens": 480,
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "costUsd": 0,
+              "durationMs": 40
+            }
+          },
+          "toolLimits": [
+            {
+              "tool": "search",
+              "limit": 4,
+              "calls": 5
+            }
+          ]
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 9,
+        "toolCalls": 10,
+        "failedToolCalls": 1,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 540,
+          "costUsd": 0,
+          "durationMs": 40
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 30,
+            "remaining": 21
+          },
+          "repeatedToolCall": {
+            "threshold": 4,
+            "currentRun": {
+              "tool": "search",
+              "length": 1
+            },
+            "longestRun": 2
+          },
+          "oscillation": {
+            "maxPeriod": 4,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 1
+          },
+          "finishReason": {
+            "lastFinishReason": "tool-calls"
+          },
+          "budget": {
+            "limits": {
+              "totalTokens": 500,
+              "durationMs": 60000
+            },
+            "used": {
+              "totalTokens": 540,
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "costUsd": 0,
+              "durationMs": 40
+            }
+          },
+          "toolLimits": [
+            {
+              "tool": "search",
+              "limit": 4,
+              "calls": 5
+            }
+          ]
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 10,
+        "toolCalls": 11,
+        "failedToolCalls": 1,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 600,
+          "costUsd": 0,
+          "durationMs": 40
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 30,
+            "remaining": 20
+          },
+          "repeatedToolCall": {
+            "threshold": 4,
+            "currentRun": {
+              "tool": "read",
+              "length": 1
+            },
+            "longestRun": 2
+          },
+          "oscillation": {
+            "maxPeriod": 4,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 0
+          },
+          "finishReason": {
+            "lastFinishReason": "tool-calls"
+          },
+          "budget": {
+            "limits": {
+              "totalTokens": 500,
+              "durationMs": 60000
+            },
+            "used": {
+              "totalTokens": 600,
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "costUsd": 0,
+              "durationMs": 40
+            }
+          },
+          "toolLimits": [
+            {
+              "tool": "search",
+              "limit": 4,
+              "calls": 5
+            }
+          ]
+        },
+        "lastVerdict": null
+      }
+    ],
+    "finalSnapshot": {
+      "version": 1,
+      "steps": 10,
+      "toolCalls": 11,
+      "failedToolCalls": 1,
+      "totals": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 600,
+        "costUsd": 0,
+        "durationMs": 40
+      },
+      "wallClockMs": 0,
+      "options": {
+        "maxSteps": "1fc56d9c041a291978e79e2d5564",
+        "repeatedToolCall": "10afefced78ef212eb2db1363007",
+        "oscillation": "173bfe01962c2716721ede7ac447",
+        "noProgress": "00c3f42e690bc21e291c3468185e",
+        "finishReason": "17450feb9bd7361bf4a7335dbc07",
+        "budget": "1e2d68bb6163ac033f8eaa2c3116",
+        "tools": "17b87e882fd8a30a7088a79c8e06",
+        "custom": "0b2475ab050fb715ff763d115336"
+      },
+      "detectors": {
+        "repeatedToolCall": {
+          "key": "05f65acbe372f6149e23f3f7e5b9",
+          "tool": "read",
+          "preview": "{\"path\":\"y\"}",
+          "length": 1,
+          "steps": [
+            9
+          ],
+          "longest": 2
+        },
+        "oscillation": {
+          "sigs": [
+            "01a596565370620b049ccffcca28",
+            "19c4a3db98ac4a17afb3d2e4ad26",
+            "106f48ef427f6015ade818edc9d3",
+            "18f64f92cb41a61b9246059a03d4"
+          ],
+          "labels": [
+            "search({\"q\":\"c\"})",
+            "search({\"q\":\"d\"})",
+            "search({\"q\":\"e\"})",
+            "read({\"path\":\"y\"})"
+          ],
+          "names": [
+            "search",
+            "search",
+            "search",
+            "read"
+          ],
+          "matches": [
+            0,
+            0,
+            0
+          ],
+          "current": null
+        },
+        "noProgress": {
+          "seen": [
+            "0eeeee0eac92ca1a67e54dabecb4",
+            "118f86ecf7f1430247c14a395e62",
+            "1149626f3675190063a676e63c75",
+            "03a050c1834a371e17f2d184d6fc",
+            "1c140ba3ee18230291d3c39e39ea",
+            "063ca08dd9a725100350d22b9fb6",
+            "13c2cec2d3366b14b4df28df02a3",
+            "05f65acbe372f6149e23f3f7e5b9"
+          ],
+          "streak": 0,
+          "textKey": null,
+          "textPreview": ""
+        },
+        "finishReason": {
+          "lastFinishReason": "tool-calls"
+        },
+        "toolLimits": [
+          {
+            "tool": "search",
+            "calls": 5
+          }
+        ]
+      }
+    }
+  }
+}

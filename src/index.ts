@@ -1,4 +1,5 @@
 export { createGuard, restoreGuard, DEFAULT_MAX_STEPS } from './guard';
+export { MAX_WINDOW_SIZE } from './detectors/repeatedToolCall';
 export { explain, isFault } from './explain';
 export { feedbackFor } from './feedback';
 export { canonicalize, stableHash } from './canonical';
@@ -54,6 +55,10 @@ export type {
   RepeatedToolCallOptions,
   RepeatedToolCallSnapshot,
   RepeatedToolCallVerdict,
+  RepeatedToolCallWindowEvidence,
+  RepeatedToolCallWindowOptions,
+  RepeatedToolCallWindowSnapshot,
+  RepeatedToolCallWindowVerdict,
   RestoreOptions,
   SnapshotOptions,
   StopReason,

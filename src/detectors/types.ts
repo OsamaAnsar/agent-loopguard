@@ -32,3 +32,11 @@ export function assertInteger(name: string, value: unknown, min: number): number
   }
   return value;
 }
+
+/** Like `assertInteger`, with an upper bound as well. */
+export function assertIntegerBetween(name: string, value: unknown, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+    throw new TypeError(`agent-loopguard: ${name} must be an integer from ${min} to ${max}, got ${String(value)}`);
+  }
+  return value;
+}

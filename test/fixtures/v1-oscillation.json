@@ -1,0 +1,391 @@
+{
+  "generatedBy": "@osama.ansar/agent-loopguard@0.2.0",
+  "name": "oscillation",
+  "note": "A cycle of two calls entered before the snapshot and completed after it.",
+  "options": {
+    "noProgress": false
+  },
+  "before": [
+    {
+      "toolCalls": [
+        {
+          "name": "a",
+          "args": "a"
+        }
+      ]
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "b",
+          "args": "b"
+        }
+      ]
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "a",
+          "args": "a"
+        }
+      ]
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "b",
+          "args": "b"
+        }
+      ]
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "a",
+          "args": "a"
+        }
+      ]
+    }
+  ],
+  "snapshot": {
+    "version": 1,
+    "steps": 5,
+    "toolCalls": 5,
+    "failedToolCalls": 0,
+    "totals": {
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "durationMs": 0
+    },
+    "wallClockMs": null,
+    "options": {
+      "maxSteps": "14d2cedfd7e35c163736434de2a1",
+      "repeatedToolCall": "106c15abdff37019f9a8bff1581d",
+      "oscillation": "1e1b3132a9ccc21e5daedd7d972e",
+      "noProgress": "030f8a6393f0aa1cbddad1a817a5",
+      "finishReason": "17450feb9bd7361bf4a7335dbc07",
+      "budget": "030f8a6393f0aa1cbddad1a817a5",
+      "tools": "15202279b28c9e04f2851bf02de3",
+      "custom": "0b2475ab050fb715ff763d115336"
+    },
+    "detectors": {
+      "repeatedToolCall": {
+        "key": "1ebbc20f42754017ed4e1e050802",
+        "tool": "a",
+        "preview": "\"a\"",
+        "length": 1,
+        "steps": [
+          4
+        ],
+        "longest": 1
+      },
+      "oscillation": {
+        "sigs": [
+          "1ebbc20f42754017ed4e1e050802",
+          "161c589edfca8514255e66cb801f",
+          "1ebbc20f42754017ed4e1e050802"
+        ],
+        "labels": [
+          "a(\"a\")",
+          "b(\"b\")",
+          "a(\"a\")"
+        ],
+        "names": [
+          "a",
+          "b",
+          "a"
+        ],
+        "matches": [
+          3,
+          0
+        ],
+        "current": null
+      },
+      "noProgress": null,
+      "finishReason": {
+        "lastFinishReason": null
+      },
+      "toolLimits": null
+    }
+  },
+  "after": [
+    {
+      "toolCalls": [
+        {
+          "name": "b",
+          "args": "b"
+        }
+      ]
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "a",
+          "args": "a"
+        }
+      ]
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "b",
+          "args": "b"
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "verdicts": [
+      {
+        "stop": true,
+        "reason": "oscillation",
+        "code": "OSCILLATION",
+        "detail": "The agent is oscillating: a cycle of 2 calls (a(\"a\") -> b(\"b\")) repeated 3 times in a row.",
+        "evidence": {
+          "period": 2,
+          "repeats": 3,
+          "threshold": 3,
+          "cycle": [
+            "a(\"a\")",
+            "b(\"b\")"
+          ],
+          "tools": [
+            "a",
+            "b"
+          ]
+        },
+        "feedback": "You are going round in a cycle of calls (`a` and `b`) without getting anywhere. Stop repeating it: try a different approach, or answer with what you have."
+      },
+      {
+        "stop": true,
+        "reason": "oscillation",
+        "code": "OSCILLATION",
+        "detail": "The agent is oscillating: a cycle of 2 calls (b(\"b\") -> a(\"a\")) repeated 3 times in a row.",
+        "evidence": {
+          "period": 2,
+          "repeats": 3,
+          "threshold": 3,
+          "cycle": [
+            "b(\"b\")",
+            "a(\"a\")"
+          ],
+          "tools": [
+            "b",
+            "a"
+          ]
+        },
+        "feedback": "You are going round in a cycle of calls (`b` and `a`) without getting anywhere. Stop repeating it: try a different approach, or answer with what you have."
+      },
+      {
+        "stop": true,
+        "reason": "oscillation",
+        "code": "OSCILLATION",
+        "detail": "The agent is oscillating: a cycle of 2 calls (a(\"a\") -> b(\"b\")) repeated 4 times in a row.",
+        "evidence": {
+          "period": 2,
+          "repeats": 4,
+          "threshold": 3,
+          "cycle": [
+            "a(\"a\")",
+            "b(\"b\")"
+          ],
+          "tools": [
+            "a",
+            "b"
+          ]
+        },
+        "feedback": "You are going round in a cycle of calls (`a` and `b`) without getting anywhere. Stop repeating it: try a different approach, or answer with what you have."
+      }
+    ],
+    "summaries": [
+      {
+        "steps": 6,
+        "toolCalls": 6,
+        "failedToolCalls": 0,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "costUsd": 0,
+          "durationMs": 0
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 50,
+            "remaining": 44
+          },
+          "repeatedToolCall": {
+            "threshold": 3,
+            "currentRun": {
+              "tool": "b",
+              "length": 1
+            },
+            "longestRun": 1
+          },
+          "oscillation": {
+            "maxPeriod": 3,
+            "repeats": 3,
+            "current": {
+              "period": 2,
+              "repeats": 3
+            }
+          },
+          "noProgress": null,
+          "finishReason": {
+            "lastFinishReason": null
+          },
+          "budget": null
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 7,
+        "toolCalls": 7,
+        "failedToolCalls": 0,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "costUsd": 0,
+          "durationMs": 0
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 50,
+            "remaining": 43
+          },
+          "repeatedToolCall": {
+            "threshold": 3,
+            "currentRun": {
+              "tool": "a",
+              "length": 1
+            },
+            "longestRun": 1
+          },
+          "oscillation": {
+            "maxPeriod": 3,
+            "repeats": 3,
+            "current": {
+              "period": 2,
+              "repeats": 3
+            }
+          },
+          "noProgress": null,
+          "finishReason": {
+            "lastFinishReason": null
+          },
+          "budget": null
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 8,
+        "toolCalls": 8,
+        "failedToolCalls": 0,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "costUsd": 0,
+          "durationMs": 0
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 50,
+            "remaining": 42
+          },
+          "repeatedToolCall": {
+            "threshold": 3,
+            "currentRun": {
+              "tool": "b",
+              "length": 1
+            },
+            "longestRun": 1
+          },
+          "oscillation": {
+            "maxPeriod": 3,
+            "repeats": 3,
+            "current": {
+              "period": 2,
+              "repeats": 4
+            }
+          },
+          "noProgress": null,
+          "finishReason": {
+            "lastFinishReason": null
+          },
+          "budget": null
+        },
+        "lastVerdict": null
+      }
+    ],
+    "finalSnapshot": {
+      "version": 1,
+      "steps": 8,
+      "toolCalls": 8,
+      "failedToolCalls": 0,
+      "totals": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0,
+        "costUsd": 0,
+        "durationMs": 0
+      },
+      "wallClockMs": null,
+      "options": {
+        "maxSteps": "14d2cedfd7e35c163736434de2a1",
+        "repeatedToolCall": "106c15abdff37019f9a8bff1581d",
+        "oscillation": "1e1b3132a9ccc21e5daedd7d972e",
+        "noProgress": "030f8a6393f0aa1cbddad1a817a5",
+        "finishReason": "17450feb9bd7361bf4a7335dbc07",
+        "budget": "030f8a6393f0aa1cbddad1a817a5",
+        "tools": "15202279b28c9e04f2851bf02de3",
+        "custom": "0b2475ab050fb715ff763d115336"
+      },
+      "detectors": {
+        "repeatedToolCall": {
+          "key": "161c589edfca8514255e66cb801f",
+          "tool": "b",
+          "preview": "\"b\"",
+          "length": 1,
+          "steps": [
+            7
+          ],
+          "longest": 1
+        },
+        "oscillation": {
+          "sigs": [
+            "161c589edfca8514255e66cb801f",
+            "1ebbc20f42754017ed4e1e050802",
+            "161c589edfca8514255e66cb801f"
+          ],
+          "labels": [
+            "b(\"b\")",
+            "a(\"a\")",
+            "b(\"b\")"
+          ],
+          "names": [
+            "b",
+            "a",
+            "b"
+          ],
+          "matches": [
+            6,
+            0
+          ],
+          "current": {
+            "period": 2,
+            "repeats": 4
+          }
+        },
+        "noProgress": null,
+        "finishReason": {
+          "lastFinishReason": null
+        },
+        "toolLimits": null
+      }
+    }
+  }
+}

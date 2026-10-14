@@ -1,0 +1,372 @@
+{
+  "generatedBy": "@osama.ansar/agent-loopguard@0.2.0",
+  "name": "repeat-run",
+  "note": "Two identical calls before the snapshot; the third after it stops the run.",
+  "options": {},
+  "before": [
+    {
+      "toolCalls": [
+        {
+          "name": "search",
+          "args": {
+            "q": "cats"
+          }
+        }
+      ],
+      "text": "Looking."
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "search",
+          "args": {
+            "q": "cats"
+          }
+        }
+      ],
+      "text": "Looking."
+    }
+  ],
+  "snapshot": {
+    "version": 1,
+    "steps": 2,
+    "toolCalls": 2,
+    "failedToolCalls": 0,
+    "totals": {
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "durationMs": 0
+    },
+    "wallClockMs": null,
+    "options": {
+      "maxSteps": "14d2cedfd7e35c163736434de2a1",
+      "repeatedToolCall": "106c15abdff37019f9a8bff1581d",
+      "oscillation": "1e1b3132a9ccc21e5daedd7d972e",
+      "noProgress": "00c3f42e690bc21e291c3468185e",
+      "finishReason": "17450feb9bd7361bf4a7335dbc07",
+      "budget": "030f8a6393f0aa1cbddad1a817a5",
+      "tools": "15202279b28c9e04f2851bf02de3",
+      "custom": "0b2475ab050fb715ff763d115336"
+    },
+    "detectors": {
+      "repeatedToolCall": {
+        "key": "0216c579ac614510756708f14142",
+        "tool": "search",
+        "preview": "{\"q\":\"cats\"}",
+        "length": 2,
+        "steps": [
+          0,
+          1
+        ],
+        "longest": 2
+      },
+      "oscillation": {
+        "sigs": [
+          "0216c579ac614510756708f14142",
+          "0216c579ac614510756708f14142"
+        ],
+        "labels": [
+          "search({\"q\":\"cats\"})",
+          "search({\"q\":\"cats\"})"
+        ],
+        "names": [
+          "search",
+          "search"
+        ],
+        "matches": [
+          0,
+          0
+        ],
+        "current": null
+      },
+      "noProgress": {
+        "seen": [
+          "0216c579ac614510756708f14142"
+        ],
+        "streak": 1,
+        "textKey": "0b3cdfb837da511ec5674f01a80b",
+        "textPreview": "looking."
+      },
+      "finishReason": {
+        "lastFinishReason": null
+      },
+      "toolLimits": null
+    }
+  },
+  "after": [
+    {
+      "toolCalls": [
+        {
+          "name": "search",
+          "args": {
+            "q": "cats"
+          }
+        }
+      ],
+      "text": "Looking."
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "search",
+          "args": {
+            "q": "cats"
+          }
+        }
+      ],
+      "text": "Looking."
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read",
+          "args": {
+            "path": "a.txt"
+          }
+        }
+      ],
+      "text": "Reading."
+    }
+  ],
+  "expected": {
+    "verdicts": [
+      {
+        "stop": true,
+        "reason": "repeated-tool-call",
+        "code": "REPEATED_TOOL_CALL",
+        "detail": "Tool \"search\" was called 3 times in a row with identical arguments: search({\"q\":\"cats\"}).",
+        "evidence": {
+          "tool": "search",
+          "argsPreview": "{\"q\":\"cats\"}",
+          "count": 3,
+          "threshold": 3,
+          "stepIndexes": [
+            0,
+            1,
+            2
+          ],
+          "identicalResults": false
+        },
+        "feedback": "You have called `search` 3 times in a row with the same arguments. Repeating it is unlikely to give you anything new. Try a different tool or different arguments, or answer with what you have."
+      },
+      {
+        "stop": true,
+        "reason": "repeated-tool-call",
+        "code": "REPEATED_TOOL_CALL",
+        "detail": "Tool \"search\" was called 4 times in a row with identical arguments: search({\"q\":\"cats\"}).",
+        "evidence": {
+          "tool": "search",
+          "argsPreview": "{\"q\":\"cats\"}",
+          "count": 4,
+          "threshold": 3,
+          "stepIndexes": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "identicalResults": false
+        },
+        "feedback": "You have called `search` 4 times in a row with the same arguments. Repeating it is unlikely to give you anything new. Try a different tool or different arguments, or answer with what you have."
+      },
+      {
+        "stop": false
+      }
+    ],
+    "summaries": [
+      {
+        "steps": 3,
+        "toolCalls": 3,
+        "failedToolCalls": 0,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "costUsd": 0,
+          "durationMs": 0
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 50,
+            "remaining": 47
+          },
+          "repeatedToolCall": {
+            "threshold": 3,
+            "currentRun": {
+              "tool": "search",
+              "length": 3
+            },
+            "longestRun": 3
+          },
+          "oscillation": {
+            "maxPeriod": 3,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 2
+          },
+          "finishReason": {
+            "lastFinishReason": null
+          },
+          "budget": null
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 4,
+        "toolCalls": 4,
+        "failedToolCalls": 0,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "costUsd": 0,
+          "durationMs": 0
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 50,
+            "remaining": 46
+          },
+          "repeatedToolCall": {
+            "threshold": 3,
+            "currentRun": {
+              "tool": "search",
+              "length": 4
+            },
+            "longestRun": 4
+          },
+          "oscillation": {
+            "maxPeriod": 3,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 3
+          },
+          "finishReason": {
+            "lastFinishReason": null
+          },
+          "budget": null
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 5,
+        "toolCalls": 5,
+        "failedToolCalls": 0,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "costUsd": 0,
+          "durationMs": 0
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 50,
+            "remaining": 45
+          },
+          "repeatedToolCall": {
+            "threshold": 3,
+            "currentRun": {
+              "tool": "read",
+              "length": 1
+            },
+            "longestRun": 4
+          },
+          "oscillation": {
+            "maxPeriod": 3,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 0
+          },
+          "finishReason": {
+            "lastFinishReason": null
+          },
+          "budget": null
+        },
+        "lastVerdict": null
+      }
+    ],
+    "finalSnapshot": {
+      "version": 1,
+      "steps": 5,
+      "toolCalls": 5,
+      "failedToolCalls": 0,
+      "totals": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0,
+        "costUsd": 0,
+        "durationMs": 0
+      },
+      "wallClockMs": null,
+      "options": {
+        "maxSteps": "14d2cedfd7e35c163736434de2a1",
+        "repeatedToolCall": "106c15abdff37019f9a8bff1581d",
+        "oscillation": "1e1b3132a9ccc21e5daedd7d972e",
+        "noProgress": "00c3f42e690bc21e291c3468185e",
+        "finishReason": "17450feb9bd7361bf4a7335dbc07",
+        "budget": "030f8a6393f0aa1cbddad1a817a5",
+        "tools": "15202279b28c9e04f2851bf02de3",
+        "custom": "0b2475ab050fb715ff763d115336"
+      },
+      "detectors": {
+        "repeatedToolCall": {
+          "key": "0c92714179848a1da46ad653d5a9",
+          "tool": "read",
+          "preview": "{\"path\":\"a.txt\"}",
+          "length": 1,
+          "steps": [
+            4
+          ],
+          "longest": 4
+        },
+        "oscillation": {
+          "sigs": [
+            "0216c579ac614510756708f14142",
+            "0216c579ac614510756708f14142",
+            "0c92714179848a1da46ad653d5a9"
+          ],
+          "labels": [
+            "search({\"q\":\"cats\"})",
+            "search({\"q\":\"cats\"})",
+            "read({\"path\":\"a.txt\"})"
+          ],
+          "names": [
+            "search",
+            "search",
+            "read"
+          ],
+          "matches": [
+            0,
+            0
+          ],
+          "current": null
+        },
+        "noProgress": {
+          "seen": [
+            "0216c579ac614510756708f14142",
+            "0c92714179848a1da46ad653d5a9"
+          ],
+          "streak": 0,
+          "textKey": null,
+          "textPreview": ""
+        },
+        "finishReason": {
+          "lastFinishReason": null
+        },
+        "toolLimits": null
+      }
+    }
+  }
+}

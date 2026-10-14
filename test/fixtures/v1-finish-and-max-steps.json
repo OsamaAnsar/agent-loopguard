@@ -1,0 +1,330 @@
+{
+  "generatedBy": "@osama.ansar/agent-loopguard@0.2.0",
+  "name": "finish-and-max-steps",
+  "note": "A custom finish-reason policy and a step limit reached after the restore.",
+  "options": {
+    "maxSteps": 5,
+    "finishReason": {
+      "otherPolicy": "stop",
+      "terminal": [
+        "stop",
+        "end_turn"
+      ]
+    },
+    "repeatedToolCall": false
+  },
+  "before": [
+    {
+      "toolCalls": [
+        {
+          "name": "t",
+          "args": 1
+        }
+      ],
+      "finishReason": "tool-calls"
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "t",
+          "args": 2
+        }
+      ],
+      "finishReason": "tool_calls"
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "t",
+          "args": 3
+        }
+      ],
+      "finishReason": "tool-calls"
+    }
+  ],
+  "snapshot": {
+    "version": 1,
+    "steps": 3,
+    "toolCalls": 3,
+    "failedToolCalls": 0,
+    "totals": {
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "durationMs": 0
+    },
+    "wallClockMs": null,
+    "options": {
+      "maxSteps": "1496783f4ee6681861951dfe6a11",
+      "repeatedToolCall": "030f8a6393f0aa1cbddad1a817a5",
+      "oscillation": "1e1b3132a9ccc21e5daedd7d972e",
+      "noProgress": "00c3f42e690bc21e291c3468185e",
+      "finishReason": "1847fce7db2f7d1be6cecd3468d5",
+      "budget": "030f8a6393f0aa1cbddad1a817a5",
+      "tools": "15202279b28c9e04f2851bf02de3",
+      "custom": "0b2475ab050fb715ff763d115336"
+    },
+    "detectors": {
+      "repeatedToolCall": null,
+      "oscillation": {
+        "sigs": [
+          "11f2c47e2106ca01c7f320ecd859",
+          "0d289c0bc8e372168ae5080b42a9",
+          "19855a8bc14ece0a4a91ed86a69c"
+        ],
+        "labels": [
+          "t(1)",
+          "t(2)",
+          "t(3)"
+        ],
+        "names": [
+          "t",
+          "t",
+          "t"
+        ],
+        "matches": [
+          0,
+          0
+        ],
+        "current": null
+      },
+      "noProgress": {
+        "seen": [
+          "11f2c47e2106ca01c7f320ecd859",
+          "0d289c0bc8e372168ae5080b42a9",
+          "19855a8bc14ece0a4a91ed86a69c"
+        ],
+        "streak": 0,
+        "textKey": null,
+        "textPreview": ""
+      },
+      "finishReason": {
+        "lastFinishReason": "tool-calls"
+      },
+      "toolLimits": null
+    }
+  },
+  "after": [
+    {
+      "toolCalls": [
+        {
+          "name": "t",
+          "args": 4
+        }
+      ],
+      "finishReason": "tool-calls"
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "t",
+          "args": 5
+        }
+      ],
+      "finishReason": "tool-calls"
+    },
+    {
+      "text": "done",
+      "finishReason": "end_turn"
+    }
+  ],
+  "expected": {
+    "verdicts": [
+      {
+        "stop": false
+      },
+      {
+        "stop": true,
+        "reason": "max-steps",
+        "code": "MAX_STEPS",
+        "detail": "Reached the limit of 5 steps.",
+        "evidence": {
+          "steps": 5,
+          "limit": 5
+        },
+        "feedback": "You have reached the limit on how many steps this task may take. Do not call any more tools; answer with what you have so far."
+      },
+      {
+        "stop": true,
+        "reason": "finish-reason",
+        "code": "FINISH_TERMINAL",
+        "detail": "The model finished with \"end_turn\", which ends the run.",
+        "evidence": {
+          "finishReason": "end_turn",
+          "normalized": "end-turn",
+          "policy": "terminal",
+          "hasText": true,
+          "toolCallCount": 0
+        },
+        "feedback": "The last step ended in a way that ends this run. Give your final answer with what you have."
+      }
+    ],
+    "summaries": [
+      {
+        "steps": 4,
+        "toolCalls": 4,
+        "failedToolCalls": 0,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "costUsd": 0,
+          "durationMs": 0
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 5,
+            "remaining": 1
+          },
+          "repeatedToolCall": null,
+          "oscillation": {
+            "maxPeriod": 3,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 0
+          },
+          "finishReason": {
+            "lastFinishReason": "tool-calls"
+          },
+          "budget": null
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 5,
+        "toolCalls": 5,
+        "failedToolCalls": 0,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "costUsd": 0,
+          "durationMs": 0
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 5,
+            "remaining": 0
+          },
+          "repeatedToolCall": null,
+          "oscillation": {
+            "maxPeriod": 3,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 0
+          },
+          "finishReason": {
+            "lastFinishReason": "tool-calls"
+          },
+          "budget": null
+        },
+        "lastVerdict": null
+      },
+      {
+        "steps": 6,
+        "toolCalls": 5,
+        "failedToolCalls": 0,
+        "totals": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "costUsd": 0,
+          "durationMs": 0
+        },
+        "detectors": {
+          "maxSteps": {
+            "limit": 5,
+            "remaining": 0
+          },
+          "repeatedToolCall": null,
+          "oscillation": {
+            "maxPeriod": 3,
+            "repeats": 3,
+            "current": null
+          },
+          "noProgress": {
+            "threshold": 3,
+            "streak": 1
+          },
+          "finishReason": {
+            "lastFinishReason": "end-turn"
+          },
+          "budget": null
+        },
+        "lastVerdict": null
+      }
+    ],
+    "finalSnapshot": {
+      "version": 1,
+      "steps": 6,
+      "toolCalls": 5,
+      "failedToolCalls": 0,
+      "totals": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0,
+        "costUsd": 0,
+        "durationMs": 0
+      },
+      "wallClockMs": null,
+      "options": {
+        "maxSteps": "1496783f4ee6681861951dfe6a11",
+        "repeatedToolCall": "030f8a6393f0aa1cbddad1a817a5",
+        "oscillation": "1e1b3132a9ccc21e5daedd7d972e",
+        "noProgress": "00c3f42e690bc21e291c3468185e",
+        "finishReason": "1847fce7db2f7d1be6cecd3468d5",
+        "budget": "030f8a6393f0aa1cbddad1a817a5",
+        "tools": "15202279b28c9e04f2851bf02de3",
+        "custom": "0b2475ab050fb715ff763d115336"
+      },
+      "detectors": {
+        "repeatedToolCall": null,
+        "oscillation": {
+          "sigs": [
+            "19855a8bc14ece0a4a91ed86a69c",
+            "159fad6c6f1a0319631d4a9e3b02",
+            "13244baf983ff3031aa3673de365"
+          ],
+          "labels": [
+            "t(3)",
+            "t(4)",
+            "t(5)"
+          ],
+          "names": [
+            "t",
+            "t",
+            "t"
+          ],
+          "matches": [
+            0,
+            0
+          ],
+          "current": null
+        },
+        "noProgress": {
+          "seen": [
+            "11f2c47e2106ca01c7f320ecd859",
+            "0d289c0bc8e372168ae5080b42a9",
+            "19855a8bc14ece0a4a91ed86a69c",
+            "159fad6c6f1a0319631d4a9e3b02",
+            "13244baf983ff3031aa3673de365"
+          ],
+          "streak": 1,
+          "textKey": "18dadcf1c6c4991b562346375451",
+          "textPreview": "done"
+        },
+        "finishReason": {
+          "lastFinishReason": "end-turn"
+        },
+        "toolLimits": null
+      }
+    }
+  }
+}

@@ -83,6 +83,15 @@ export function feedbackFor(verdict: StopVerdict, phase: FeedbackPhase = 'check'
       return `You have called ${toolRef(tool)} ${times(count)} in a row with the same arguments${same}. Repeating it is unlikely to give you anything new. ${ELSE}`;
     }
 
+    case 'repeated-tool-call-window': {
+      const { tool, count, windowSize, identicalResults } = verdict.evidence;
+      const same = identicalResults ? ' and got the same result each time' : '';
+      if (before) {
+        return `That call was not run: you have already called ${toolRef(tool)} ${times(count - 1)} with the same arguments${same} within your last ${windowSize} calls, even with other calls in between, and repeating it is unlikely to give you anything new. ${ELSE}`;
+      }
+      return `You have called ${toolRef(tool)} ${times(count)} with the same arguments${same} within your last ${windowSize} calls, even with other calls in between. Repeating it is unlikely to give you anything new. ${ELSE}`;
+    }
+
     case 'oscillation': {
       const list = toolList(verdict.evidence.tools);
       return before

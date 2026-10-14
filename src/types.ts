@@ -58,6 +58,7 @@ export type StopReason =
   | 'max-steps'
   | 'tool-limit'
   | 'repeated-tool-call'
+  | 'repeated-tool-call-window'
   | 'oscillation'
   | 'no-progress'
   | 'finish-reason'
@@ -71,6 +72,7 @@ export type BuiltinStopCode =
   | 'MAX_STEPS'
   | 'TOOL_CALL_CAP'
   | 'REPEATED_TOOL_CALL'
+  | 'REPEATED_TOOL_CALL_WINDOW'
   | 'OSCILLATION'
   | 'NO_PROGRESS'
   | 'FINISH_TERMINAL'
@@ -105,6 +107,22 @@ export interface RepeatedToolCallEvidence {
   threshold: number;
   /** Indexes (0-based) of the steps that contain the run; at most the last 10. */
   stepIndexes: number[];
+  /** True when identical results were required too (the global option, or a `polling` tool). */
+  identicalResults: boolean;
+}
+
+export interface RepeatedToolCallWindowEvidence {
+  tool: string;
+  /** Canonical form of the arguments, truncated for display. */
+  argsPreview: string;
+  /** How many times the call occurs in the window, counting the one that tripped the rule. */
+  count: number;
+  /** The count that applied to this tool (`window.maxRepeats` unless the tool's policy changes it). */
+  threshold: number;
+  /** `window.size`: how many of the newest calls are looked at. */
+  windowSize: number;
+  /** How many calls the window held at that moment (less than `windowSize` early in a run). */
+  windowCalls: number;
   /** True when identical results were required too (the global option, or a `polling` tool). */
   identicalResults: boolean;
 }
@@ -172,6 +190,11 @@ export type RepeatedToolCallVerdict = StopBase<
   'REPEATED_TOOL_CALL',
   RepeatedToolCallEvidence
 >;
+export type RepeatedToolCallWindowVerdict = StopBase<
+  'repeated-tool-call-window',
+  'REPEATED_TOOL_CALL_WINDOW',
+  RepeatedToolCallWindowEvidence
+>;
 export type OscillationVerdict = StopBase<'oscillation', 'OSCILLATION', OscillationEvidence>;
 export type NoProgressVerdict = StopBase<'no-progress', 'NO_PROGRESS', NoProgressEvidence>;
 export type FinishReasonVerdict = StopBase<
@@ -195,6 +218,7 @@ export type StopVerdict =
   | MaxStepsVerdict
   | ToolLimitVerdict
   | RepeatedToolCallVerdict
+  | RepeatedToolCallWindowVerdict
   | OscillationVerdict
   | NoProgressVerdict
   | FinishReasonVerdict
@@ -223,6 +247,17 @@ export type Verdict = ContinueVerdict | StopVerdict;
 // Options
 // ---------------------------------------------------------------------------
 
+/**
+ * Windowed repeat detection: stop when the same call occurs `maxRepeats` times among the newest
+ * `size` calls, whatever came in between (`search(x)`, `read(a)`, `search(x)`, `read(b)`, `search(x)`).
+ */
+export interface RepeatedToolCallWindowOptions {
+  /** How many of the newest tool calls to look at. Integer from 2 to 1000 (`MAX_WINDOW_SIZE`). */
+  size: number;
+  /** Stop when the same call occurs this many times in the window. Integer from 2 to `size`. */
+  maxRepeats: number;
+}
+
 export interface RepeatedToolCallOptions {
   /** Stop when the same call occurs this many times in a row. Integer >= 2. Default 3. */
   threshold?: number;
@@ -233,6 +268,12 @@ export interface RepeatedToolCallOptions {
   requireIdenticalResults?: boolean;
   /** Drop failed calls (non-null `error`) from the sequence before counting. Default false. */
   ignoreErrors?: boolean;
+  /**
+   * Also stop on repeats that are not consecutive. Off by default (and with `false`). The calls it
+   * counts follow the same rules as the consecutive check: ignored tools and, with `ignoreErrors`,
+   * failed calls are left out; `requireIdenticalResults` and `polling` tools compare results too.
+   */
+  window?: RepeatedToolCallWindowOptions | false;
 }
 
 export interface OscillationOptions {
@@ -377,6 +418,8 @@ export interface GuardSummary {
       threshold: number;
       currentRun: { tool: string; length: number } | null;
       longestRun: number;
+      /** Present only when `window` is set: the window's size and limit, the calls in it now, and the highest count of one call. */
+      window?: { size: number; maxRepeats: number; calls: number; highestCount: number };
     } | null;
     oscillation: { maxPeriod: number; repeats: number; current: { period: number; repeats: number } | null } | null;
     noProgress: { threshold: number; streak: number } | null;
@@ -422,13 +465,14 @@ interface DenyBase<R extends StopReason, C extends string, E> {
 
 /**
  * The call should not run. Only the rules that can be judged before a call runs appear here:
- * `max-steps`, `budget`, `tool-limit`, `repeated-tool-call` and `oscillation`.
+ * `max-steps`, `budget`, `tool-limit`, `repeated-tool-call`, `repeated-tool-call-window` and `oscillation`.
  */
 export type PreflightDeny =
   | DenyBase<'max-steps', 'MAX_STEPS', MaxStepsEvidence>
   | DenyBase<'budget', BudgetVerdict['code'], BudgetEvidence>
   | DenyBase<'tool-limit', 'TOOL_CALL_CAP', ToolLimitEvidence>
   | DenyBase<'repeated-tool-call', 'REPEATED_TOOL_CALL', RepeatedToolCallEvidence>
+  | DenyBase<'repeated-tool-call-window', 'REPEATED_TOOL_CALL_WINDOW', RepeatedToolCallWindowEvidence>
   | DenyBase<'oscillation', 'OSCILLATION', OscillationEvidence>;
 
 export type Preflight = PreflightAllow | PreflightDeny;
@@ -439,6 +483,7 @@ export type PreflightStopVerdict =
   | BudgetVerdict
   | ToolLimitVerdict
   | RepeatedToolCallVerdict
+  | RepeatedToolCallWindowVerdict
   | OscillationVerdict;
 
 // ---------------------------------------------------------------------------
@@ -475,6 +520,13 @@ export interface RepeatedToolCallSnapshot {
   /** Indexes of the newest steps in the run (at most 10). */
   steps: number[];
   longest: number;
+  /** Present only when the `window` option is set: the newest call keys the window holds. */
+  window?: RepeatedToolCallWindowSnapshot;
+}
+
+/** The newest calls the windowed repeat rule counts, as hashes (oldest first, at most `window.size`). */
+export interface RepeatedToolCallWindowSnapshot {
+  keys: string[];
 }
 
 /** The newest calls the oscillation rule compares against, as hashes plus short labels. */

@@ -50,6 +50,7 @@ Every detector can be tuned or switched off with `false`. All defaults are liste
 | `maxSteps` | the number of steps recorded reaches the limit | `50` |
 | `tools.<name>.maxCalls` | a tool is called more often than its cap allows (the call after the Nth) | no caps unless you set them |
 | `repeatedToolCall` | the same tool is called with canonically-equal arguments N times in a row | `threshold: 3`, `requireIdenticalResults: false`, `ignoreErrors: false`; per tool: `repeatThreshold`, `polling` |
+| `repeatedToolCall.window` | the same call occurs N times among the newest K calls, even with other calls in between (off unless you set it) | no window unless you set `window: { size, maxRepeats }` |
 | `oscillation` | the tail of the tool-call sequence is a cycle of 2..`maxPeriod` calls repeated `repeats` times | `maxPeriod: 3`, `repeats: 3` |
 | `noProgress` | N consecutive steps have the same normalised text and no new tool outcome | `threshold: 3` |
 | `finishReason` | the finish reason is terminal, or is an unfamiliar one under the `otherPolicy` | `terminal: ['stop', 'length', 'content-filter', 'error']`, `otherPolicy: 'stop-if-text-only'` |
@@ -162,6 +163,26 @@ const guard = createGuard({
 
 Tool names that are not listed follow the global options; names that are never called do no harm. An option the policy does not know (`maxcalls`, a typo) throws a `TypeError` from `createGuard`, so a misspelt cap cannot quietly do nothing. `repeatThreshold` and `polling` have no effect when `repeatedToolCall` is `false`; `maxCalls` and `ignore` still work.
 
+### Catch repeats that are not consecutive
+
+```ts
+import { createGuard } from '@osama.ansar/agent-loopguard';
+
+const guard = createGuard({
+  repeatedToolCall: { window: { size: 10, maxRepeats: 3 } }, // the same call 3 times among the last 10
+});
+// search(x), read(a), search(x), read(b), search(x)  ->  stops on the third search(x)
+```
+
+The default `repeatedToolCall` rule only sees a call repeated back to back, so an agent that goes `search(x)`, `read(a)`, `search(x)`, `read(b)`, `search(x)` is never stopped by it, and `oscillation` only finds fixed cycles of at most `maxPeriod` calls. `window` counts how often each call (tool plus canonically-equal arguments) occurs among the newest `size` tool calls and stops when one reaches `maxRepeats`. It is off unless you set it.
+
+- **Values.** `size` is an integer from 2 to 1000 (`MAX_WINDOW_SIZE`; anything else throws a `TypeError` from `createGuard`), `maxRepeats` an integer from 2 to `size`. `{ size: 10, maxRepeats: 3 }` is a reasonable place to start, not a tuned value: a repeat that is `size` or more calls away from the others is not seen, and a small `maxRepeats` flags agents that legitimately re-read the same file. Count the calls of a normal step in your agent (parallel calls count one by one) before choosing `size`.
+- **Counting.** The calls are the same ones the consecutive rule reads: flattened across steps and parallel calls, ignored tools left out, failed calls left out with `ignoreErrors`. Consecutive repeats count towards the window too, so `maxRepeats` below `threshold` makes the window the stricter rule. When both stop at once the consecutive rule is the one reported.
+- **Per-tool policies.** `ignore` takes a tool out of the window. A `polling` tool (or `requireIdenticalResults`) is counted by call and result, so only identical results repeat. A tool's `repeatThreshold`, or a polling tool's `maxIdenticalResults`, replaces `maxRepeats` for that tool, exactly as it replaces `threshold` for the consecutive rule; a number above `size` can never be reached. `maxCalls` is independent.
+- **The stop.** `reason: 'repeated-tool-call-window'`, `code: 'REPEATED_TOOL_CALL_WINDOW'`, evidence `{ tool, argsPreview, count, threshold, windowSize, windowCalls, identicalResults }`. It is a new reason rather than a new shape under `repeated-tool-call`, so code that narrows on `'repeated-tool-call'` keeps its types. It has `feedback` like every other fault.
+- **Preflight.** A call that would be the `maxRepeats`-th occurrence in the window is refused before it runs (the window slides as parallel calls are added). As for the consecutive rule, result-aware cases cannot be judged before the result exists, so `preflight` never refuses on them.
+- **Cost.** Memory is bounded by `size` (one 28-character hash per call) and each call costs O(1). A snapshot grows by about 31 bytes per slot: measured 30,690 extra bytes at `size: 1000` and about 300 at `size: 10`.
+
 ### Check a call before it runs
 
 ```ts
@@ -193,6 +214,7 @@ What it can and cannot judge, because a call that has not run yet has no result,
 | `maxSteps` | Yes, when the limit is already reached. |
 | `tools.<name>.maxCalls` | Yes: the call after the Nth is refused. |
 | `repeatedToolCall` | Yes, for the default rule: the call that would be the Nth identical one in a row. **No** for result-aware rules (`requireIdenticalResults`, `polling` tools): they cannot be judged before the result is known, so `preflight` never refuses on them (it may be right to run the call: the result might be new). `check` still stops them once the identical outcomes are in. |
+| `repeatedToolCall.window` | Yes, by call: the call that would be the `maxRepeats`-th in the window. Not for result-aware cases, as above. |
 | `oscillation` | Yes: the call that would complete the cycle. |
 | `noProgress`, `finishReason`, `custom` | No. They need the finished step (or your code), so only `check` runs them. |
 
@@ -245,7 +267,7 @@ const guard = createGuard.fromJSON(JSON.parse(await store.get(`run:${runId}`)), 
 The restored guard goes on exactly where the original stopped: given the same steps it returns the same verdicts and the same summaries (this is checked by a differential test that cuts random runs at random points, through `structuredClone` and through a JSON round trip). `restoreGuard` is the same function as `createGuard.fromJSON`.
 
 - **What a snapshot holds.** Version number, step and call counters, running totals, the wall-clock time used so far (only when there is a duration budget), tool names, hashes of recent calls and outcomes, and a few previews of at most 80 characters of recent arguments and text, kept so that evidence and messages read the same after a restore. **What it does not hold:** raw arguments, results, errors, model text, the step history, the options, the last verdict. Hashes are not cryptographic; a short, guessable value could be recovered by hashing candidates, so treat a snapshot as run data, not as public. `guard.snapshot({ redact: true })` replaces the previews with `[redacted]`: stop decisions stay the same, but evidence for calls made before the snapshot says `[redacted]`.
-- **Size.** Bounded by the options, not by the length of the run: the oscillation detector keeps `maxPeriod` calls, the no-progress detector the newest 1024 distinct outcomes (about 31 bytes each), the repeat detector one run. Measured with default options: 831 bytes for a fresh guard, and 33,088 bytes after 1,500 or 6,000 steps that each had a new 2 KB argument, a 3 KB result and 500 characters of text (it stops growing once 1024 outcomes are remembered); raising `oscillation.maxPeriod` to 50 made it 39,292 bytes. Tool names over 256 characters are cut in the snapshot.
+- **Size.** Bounded by the options, not by the length of the run: the oscillation detector keeps `maxPeriod` calls, the no-progress detector the newest 1024 distinct outcomes (about 31 bytes each), the repeat detector one run, plus `window.size` call hashes (about 31 bytes each) when you set a window. Measured with default options: 831 bytes for a fresh guard, and 33,088 bytes after 1,500 or 6,000 steps that each had a new 2 KB argument, a 3 KB result and 500 characters of text (it stops growing once 1024 outcomes are remembered); raising `oscillation.maxPeriod` to 50 made it 39,292 bytes. Tool names over 256 characters are cut in the snapshot.
 - **Options are not stored; they are fingerprinted.** Functions cannot be saved, so you pass the options again. The snapshot records one fingerprint per group of options (`maxSteps`, `repeatedToolCall`, `oscillation`, `noProgress`, `finishReason`, `budget`, `tools`, and the number of `custom` detectors), and restoring under different options throws a `TypeError` that names the groups, instead of silently behaving differently. Not fingerprinted: `now`, `feedback` and what your custom detectors do. To give a run that hit its limit more room, pass `{ allowLimitChanges: true }` as the third argument: then `maxSteps` and `budget` may differ (and only those).
 - **History.** The raw steps are not in a snapshot, so a restored guard starts with an empty `history`, and custom detectors see only the steps recorded since the restore. `summary().steps` and the detectors keep counting across the restore. `summary().lastVerdict` is `null` until the first `check`.
 - **Wall-clock budgets.** The time used so far is stored as a duration, so the time between saving and restoring is not counted.
@@ -277,6 +299,8 @@ Steps are reduced to comparable facts once, when `check` is called. Anything unu
 
 **`repeatedToolCall`.** Stops when the run of identical signatures at the end of the sequence reaches `threshold` (exactly N stops, N-1 does not). With `requireIdenticalResults`, identical means identical outcome signature, so polling a job whose status keeps changing is not a repeat. With `ignoreErrors`, calls with a non-null `error` are removed from the sequence before counting. A run that reaches the threshold in the middle of a step still counts if a later call in the same step ends it. A tool's `repeatThreshold` replaces the threshold for runs of that tool; a `polling` tool compares outcomes like `requireIdenticalResults` does, with its own threshold; the evidence reports the threshold and `identicalResults` that applied.
 
+**`repeatedToolCall.window`.** Keeps the keys (call hashes) of the newest `size` counted calls in a ring buffer with a count per key. Each counted call is added, the oldest one drops out once the window is full, and the rule stops when the added call's key reaches its threshold (`maxRepeats`, or the tool's own number, see above). A run that reaches the threshold in the middle of a step still counts if a later call in the same step slides it out.
+
 **`oscillation`.** For each period `p` from 2 to `maxPeriod`, looks at the end of the call-signature sequence: it stops when the last `p` calls repeat for `repeats` full cycles in a row (`a b a b a b` is period 2, three cycles). A cycle made of one distinct call (`a a a a a a`) is not an oscillation; that is `repeatedToolCall`'s case. Results are not considered.
 
 **`noProgress`.** A step is *stalled* when none of its tool outcomes is new in this run (a step without tool calls is always stalled). It stops after `threshold` consecutive stalled steps that all have the same normalised text (lower-cased, whitespace collapsed; an empty string counts as text, so tool-only steps are judged on outcomes alone). A new outcome, or different text, restarts the count. Because outcomes include the result, the same call returning a new result is progress. Calls of `ignore` tools are not outcomes, so a step that only calls them is stalled. The detector remembers the newest 1024 distinct outcomes; in a run with more than that, an outcome older than the window counts as new again (this bounds memory and snapshot size).
@@ -287,7 +311,7 @@ Why the default exists: some frameworks only treat `stop` as "finished". If a pr
 
 **`budget`.** Totals are summed from the steps: input, output and total tokens (total falls back to input plus output when a step gives none), `costUsd`, and `durationMs`. Numbers that are not finite and non-negative are ignored. A limit is *spent when reached* (`value >= limit`): the guard runs after a step has happened, so waiting for "exceeded" would always overshoot by a step. `maxDurationMs` compares against the larger of the summed `durationMs` values and the wall-clock time since the guard was created or reset (read from the injectable `now()`, so tests can control it). With `warnAt` (a ratio between 0 and 1, per limit or shared), a step that is at or past that fraction but below the limit returns `{ stop: false, warnings: [...] }`; the warning repeats on every step while it applies.
 
-**Priority.** All detectors see every step (so their state stays consistent), and the first stop wins in this order: finish reason, budget, max steps, tool limit, repeated tool call, oscillation, no progress, custom. The tool limit sits after the step and budget limits (all explicit caps) and before the pattern detectors, because a cap you set is a harder rule than a heuristic. `preflight` uses the same order for the rules it can judge. Detectors overlap: a perfectly repeating `a b a b a` with identical results and empty text is reported by `noProgress` a step before `oscillation` would fire.
+**Priority.** All detectors see every step (so their state stays consistent), and the first stop wins in this order: finish reason, budget, max steps, tool limit, repeated tool call (the consecutive rule, then the window), oscillation, no progress, custom. The tool limit sits after the step and budget limits (all explicit caps) and before the pattern detectors, because a cap you set is a harder rule than a heuristic. `preflight` uses the same order for the rules it can judge. Detectors overlap: a perfectly repeating `a b a b a` with identical results and empty text is reported by `noProgress` a step before `oscillation` would fire.
 
 ## API reference
 
@@ -296,7 +320,10 @@ Why the default exists: some frameworks only treat `stop` as "finished". If a pr
 ```ts
 interface GuardOptions {
   maxSteps?: number | false;                          // default 50
-  repeatedToolCall?: { threshold?: number; requireIdenticalResults?: boolean; ignoreErrors?: boolean } | false;
+  repeatedToolCall?: {
+    threshold?: number; requireIdenticalResults?: boolean; ignoreErrors?: boolean;
+    window?: { size: number; maxRepeats: number } | false;   // size 2..1000, maxRepeats 2..size; default off
+  } | false;
   oscillation?: { maxPeriod?: number; repeats?: number } | false;
   noProgress?: { threshold?: number } | false;
   finishReason?: { terminal?: readonly string[]; otherPolicy?: 'stop' | 'continue' | 'stop-if-text-only' } | false;
@@ -356,7 +383,7 @@ type Verdict =
   | { stop: false; warnings?: GuardWarning[] }
   | { stop: true; reason: StopReason; code: string; detail: string; evidence: /* depends on reason */; feedback?: string; warnings?: GuardWarning[] };
 
-type StopReason = 'max-steps' | 'tool-limit' | 'repeated-tool-call' | 'oscillation' | 'no-progress' | 'finish-reason' | 'budget' | 'custom';
+type StopReason = 'max-steps' | 'tool-limit' | 'repeated-tool-call' | 'repeated-tool-call-window' | 'oscillation' | 'no-progress' | 'finish-reason' | 'budget' | 'custom';
 ```
 
 `verdict.reason` narrows `verdict.evidence` in TypeScript. Verdicts are plain JSON.
@@ -366,6 +393,7 @@ type StopReason = 'max-steps' | 'tool-limit' | 'repeated-tool-call' | 'oscillati
 | `max-steps` | `MAX_STEPS` | `{ steps, limit }` |
 | `tool-limit` | `TOOL_CALL_CAP` | `{ tool, calls, limit }` |
 | `repeated-tool-call` | `REPEATED_TOOL_CALL` | `{ tool, argsPreview, count, threshold, stepIndexes, identicalResults }` |
+| `repeated-tool-call-window` | `REPEATED_TOOL_CALL_WINDOW` | `{ tool, argsPreview, count, threshold, windowSize, windowCalls, identicalResults }` |
 | `oscillation` | `OSCILLATION` | `{ period, repeats, threshold, cycle, tools }` |
 | `no-progress` | `NO_PROGRESS` | `{ steps, threshold, textPreview }` |
 | `finish-reason` | `FINISH_TERMINAL`, `FINISH_OTHER`, `FINISH_OTHER_TEXT_ONLY` | `{ finishReason, normalized, policy, hasText, toolCallCount }` |
@@ -387,7 +415,7 @@ A warning is `{ code: 'BUDGET_WARNING', metric, value, limit, ratio, detail }`. 
 ```ts
 type Preflight =
   | { allow: true; warnings?: GuardWarning[] }
-  | { allow: false; reason: 'max-steps' | 'budget' | 'tool-limit' | 'repeated-tool-call' | 'oscillation';
+  | { allow: false; reason: 'max-steps' | 'budget' | 'tool-limit' | 'repeated-tool-call' | 'repeated-tool-call-window' | 'oscillation';
       code: string; detail: string; evidence: /* as for the same reason in a verdict */; feedback: string };
 ```
 
