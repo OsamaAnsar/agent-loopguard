@@ -54,13 +54,35 @@ const CONFIGS: Config[] = [
     }),
   },
   {
+    name: 'early warnings on for every rule',
+    options: () => ({
+      warnings: true,
+      repeatedToolCall: { threshold: 4, window: { size: 9, maxRepeats: 3 } },
+      oscillation: { repeats: 4 },
+      noProgress: { threshold: 4 },
+      tools: { search: { maxCalls: 7 }, poll: { polling: true }, think: { ignore: true } },
+    }),
+  },
+  {
+    name: 'early warnings with explicit levels, budgets and the wall clock',
+    options: (clock) => ({
+      repeatedToolCall: { threshold: 6, warnAt: 3, window: { size: 12, maxRepeats: 5, warnAt: 2 } },
+      oscillation: { repeats: 5, warnAt: 2 },
+      noProgress: { threshold: 5, warnAt: 2 },
+      tools: { search: { maxCalls: 8, warnAt: 5 }, c: { maxCalls: 3, warnAt: false } },
+      budget: { maxTotalTokens: 900, maxCostUsd: 2, maxDurationMs: 600, warnAt: 0.5 },
+      now: () => clock.t,
+    }),
+  },
+  {
     name: 'the largest window',
     options: () => ({ maxSteps: false, repeatedToolCall: { window: { size: 1000, maxRepeats: 6 } } }),
   },
 ];
 
-function runDifferential(config: Config, seeds = 14): { stops: number; restoredRuns: number } {
+function runDifferential(config: Config, seeds = 14): { stops: number; restoredRuns: number; warned: number } {
   let stops = 0;
+  let warned = 0;
   let restoredRuns = 0;
   for (let seed = 1; seed <= seeds; seed += 1) {
     const rand = mulberry32(seed * 104729);
@@ -109,19 +131,21 @@ function runDifferential(config: Config, seeds = 14): { stops: number; restoredR
           expect(got, `${label}, step ${j}`).toEqual(verdicts[j]);
           expect(b.summary(), `${label}, step ${j}`).toEqual(summaries[j + 1]);
           if (got.stop) stops += 1;
+          if (got.warnings?.some((w) => w.code !== 'BUDGET_WARNING')) warned += 1;
         }
         expect(b.toJSON(), label).toEqual(snapshots[STEPS]);
       }
     }
   }
-  return { stops, restoredRuns };
+  return { stops, restoredRuns, warned };
 }
 
 describe('restore == carry on, for the 0.3.0 rules (differential property)', () => {
   it.each(CONFIGS.map((c) => [c.name, c] as const))('%s', (_name, config) => {
-    const { stops, restoredRuns } = runDifferential(config);
+    const { stops, restoredRuns, warned } = runDifferential(config);
     expect(restoredRuns).toBe(14 * 8 * 3);
     expect(stops).toBeGreaterThan(0); // the property is not vacuous
+    if (config.name.startsWith('early warnings')) expect(warned).toBeGreaterThan(50);
   });
 
   it('chains: restoring a restored guard, repeatedly, still matches the uninterrupted run', () => {

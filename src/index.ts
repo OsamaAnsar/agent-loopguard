@@ -2,6 +2,7 @@ export { createGuard, restoreGuard, DEFAULT_MAX_STEPS } from './guard';
 export { MAX_WINDOW_SIZE } from './detectors/repeatedToolCall';
 export { explain, isFault } from './explain';
 export { feedbackFor } from './feedback';
+export { feedbackForWarning } from './warnings';
 export { canonicalize, stableHash } from './canonical';
 export { toStopWhen, toGuardStep } from './adapters/aiSdk';
 export type { AiSdkStepLike, AiSdkToolCallLike, AiSdkToolResultLike, ToStopWhenOptions } from './adapters/aiSdk';
@@ -15,6 +16,7 @@ export type {
   BudgetMetric,
   BudgetOptions,
   BudgetVerdict,
+  BudgetWarning,
   BuiltinStopCode,
   ContinueVerdict,
   CustomDetector,
@@ -41,10 +43,12 @@ export type {
   NoProgressOptions,
   NoProgressSnapshot,
   NoProgressVerdict,
+  NoProgressWarning,
   OscillationEvidence,
   OscillationOptions,
   OscillationSnapshot,
   OscillationVerdict,
+  OscillationWarning,
   OtherFinishPolicy,
   Preflight,
   PreflightAllow,
@@ -55,16 +59,20 @@ export type {
   RepeatedToolCallOptions,
   RepeatedToolCallSnapshot,
   RepeatedToolCallVerdict,
+  RepeatedToolCallWarning,
   RepeatedToolCallWindowEvidence,
   RepeatedToolCallWindowOptions,
   RepeatedToolCallWindowSnapshot,
   RepeatedToolCallWindowVerdict,
+  RepeatedToolCallWindowWarning,
   RestoreOptions,
   SnapshotOptions,
   StopReason,
   StopVerdict,
   ToolLimitEvidence,
   ToolLimitVerdict,
+  ToolLimitWarning,
   ToolPolicy,
   Verdict,
+  WarningCode,
 } from './types';

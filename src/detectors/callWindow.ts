@@ -35,6 +35,11 @@ export class CallWindow {
     return count;
   }
 
+  /** How often `key` is in the window now. */
+  count(key: string): number {
+    return this.counts.get(key) ?? 0;
+  }
+
   /** The highest count of any one key in the window (0 when it is empty). */
   highest(): number {
     let best = 0;

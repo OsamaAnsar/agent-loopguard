@@ -14,27 +14,27 @@ import type { BudgetMetric, FeedbackPhase, PreflightStopVerdict, StopVerdict } f
 
 const SAFE_TOOL_NAME = /^[A-Za-z0-9_.:/-]{1,64}$/;
 
-function isSafeName(name: unknown): name is string {
+export function isSafeName(name: unknown): name is string {
   return typeof name === 'string' && SAFE_TOOL_NAME.test(name);
 }
 
-function toolRef(name: unknown): string {
+export function toolRef(name: unknown): string {
   return isSafeName(name) ? `\`${name}\`` : 'that tool';
 }
 
-function times(n: number): string {
+export function times(n: number): string {
   return `${n} time${n === 1 ? '' : 's'}`;
 }
 
 /** "`a`", "`a` and `b`", "`a`, `b` and `c`", or a generic phrase when a name is not safe to show. */
-function toolList(names: readonly string[]): string {
+export function toolList(names: readonly string[]): string {
   const unique = [...new Set(names)];
   if (unique.length === 0 || !unique.every(isSafeName)) return 'the same few tools';
   const refs = unique.map((n) => `\`${n}\``);
   return refs.length === 1 ? (refs[0] as string) : `${refs.slice(0, -1).join(', ')} and ${refs[refs.length - 1] as string}`;
 }
 
-const BUDGET_LABEL: Record<BudgetMetric, string> = {
+export const BUDGET_LABEL: Record<BudgetMetric, string> = {
   totalTokens: 'token',
   inputTokens: 'input token',
   outputTokens: 'output token',
@@ -42,7 +42,7 @@ const BUDGET_LABEL: Record<BudgetMetric, string> = {
   durationMs: 'time',
 };
 
-const ELSE = 'Try a different tool or different arguments, or answer with what you have.';
+export const ELSE = 'Try a different tool or different arguments, or answer with what you have.';
 
 /**
  * The default model-facing text for a stop verdict, or `undefined` when there is none: a normal

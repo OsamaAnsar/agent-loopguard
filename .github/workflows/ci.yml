@@ -47,3 +47,6 @@ jobs:
 
       - name: Run the preflight and feedback example
         run: npm run example:preflight
+
+      - name: Run the windowed repeats and warnings example
+        run: npm run example:warnings

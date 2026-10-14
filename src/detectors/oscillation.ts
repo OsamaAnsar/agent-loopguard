@@ -13,9 +13,16 @@ import {
   fail,
   field,
 } from '../snapshot';
-import type { OscillationEvidence, OscillationOptions, OscillationSnapshot, OscillationVerdict } from '../types';
-import type { Detector, DetectorResult } from './types';
-import { assertInteger } from './types';
+import type {
+  GuardWarning,
+  OscillationEvidence,
+  OscillationOptions,
+  OscillationSnapshot,
+  OscillationVerdict,
+} from '../types';
+import { oscillationWarning } from '../warnings';
+import type { Detector, DetectorResult, WarnRule } from './types';
+import { assertInteger, resolveWarnAt } from './types';
 
 /** The newest calls (at most `maxPeriod`) and the per-period match counters. */
 interface Ring {
@@ -24,6 +31,12 @@ interface Ring {
   names: string[];
   /** `matches[p - 2]`: trailing calls equal to the call `p` positions earlier. */
   matches: number[];
+}
+
+/** What `peek` found: the stop the calls would cause, and the warnings they would carry. */
+export interface OscillationPeek {
+  stop?: OscillationVerdict;
+  warnings: GuardWarning[];
 }
 
 /**
@@ -37,6 +50,9 @@ interface Ring {
  * Only the newest `maxPeriod` calls are kept, plus one counter per period: how many trailing
  * calls equal the call `period` positions earlier. That is all the rule needs, so memory and the
  * work per call are bounded by `maxPeriod`, however long the run is.
+ *
+ * With early warnings on, a step that adds calls carries a warning while the cycle at the end of
+ * the sequence has been seen between `warnAt` (default `repeats - 1`, at least 2) and `repeats` times.
  */
 export class OscillationDetector implements Detector {
   readonly maxPeriod: number;
@@ -44,10 +60,12 @@ export class OscillationDetector implements Detector {
 
   private ring: Ring;
   private current: { period: number; repeats: number } | null = null;
+  private readonly warn: WarnRule;
 
-  constructor(options: OscillationOptions = {}) {
+  constructor(options: OscillationOptions = {}, warnByDefault = false) {
     this.maxPeriod = assertInteger('oscillation.maxPeriod', options.maxPeriod ?? 3, 2);
     this.repeats = assertInteger('oscillation.repeats', options.repeats ?? 3, 2);
+    this.warn = resolveWarnAt('oscillation.warnAt', options.warnAt, warnByDefault, 2, this.repeats - 1);
     this.ring = this.emptyRing();
   }
 
@@ -62,7 +80,10 @@ export class OscillationDetector implements Detector {
     }
 
     this.current = found ? { period: found.period, repeats: found.repeats } : null;
-    if (!found) return undefined;
+    if (!found) {
+      const warning = record.calls.length > 0 ? this.warningFor(this.ring) : undefined;
+      return warning === undefined ? undefined : { warnings: [warning] };
+    }
 
     return {
       stop: {
@@ -79,7 +100,7 @@ export class OscillationDetector implements Detector {
    * What `observe` would report if these calls (not yet made) were the next ones, without recording
    * them. Results are not part of the rule, so nothing is lost by not having them yet.
    */
-  peek(calls: readonly CallRecord[]): OscillationVerdict | undefined {
+  peek(calls: readonly CallRecord[]): OscillationPeek {
     const ring: Ring = {
       sigs: [...this.ring.sigs],
       labels: [...this.ring.labels],
@@ -91,13 +112,19 @@ export class OscillationDetector implements Detector {
       this.push(ring, call);
       found = this.detect(ring) ?? found;
     }
-    if (found === undefined) return undefined;
+    if (found === undefined) {
+      const warning = calls.length > 0 ? this.warningFor(ring) : undefined;
+      return { warnings: warning === undefined ? [] : [warning] };
+    }
     return {
-      stop: true,
-      reason: 'oscillation',
-      code: 'OSCILLATION',
-      detail: `Calling now would complete a cycle of ${found.period} calls (${found.cycle.join(' -> ')}) repeated ${found.repeats} times in a row.`,
-      evidence: found,
+      stop: {
+        stop: true,
+        reason: 'oscillation',
+        code: 'OSCILLATION',
+        detail: `Calling now would complete a cycle of ${found.period} calls (${found.cycle.join(' -> ')}) repeated ${found.repeats} times in a row.`,
+        evidence: found,
+      },
+      warnings: [],
     };
   }
 
@@ -122,14 +149,21 @@ export class OscillationDetector implements Detector {
     }
   }
 
-  /** Look for a repeating cycle at the very end of the sequence. */
-  private detect(ring: Ring): OscillationEvidence | undefined {
+  /** The warning for the cycle at the end of `ring`, when it has been seen often enough but not yet `repeats` times. */
+  private warningFor(ring: Ring): GuardWarning | undefined {
+    if (!this.warn.enabled) return undefined;
+    const found = this.detect(ring, Math.max(2, this.warn.at ?? this.repeats - 1));
+    return found !== undefined && found.repeats < this.repeats ? oscillationWarning(found) : undefined;
+  }
+
+  /** Look for a repeating cycle at the very end of the sequence that has been seen at least `minCycles` times. */
+  private detect(ring: Ring, minCycles: number = this.repeats): OscillationEvidence | undefined {
     const n = ring.sigs.length;
     for (let period = 2; period <= this.maxPeriod; period += 1) {
       // A tail of `period` calls followed by L matching positions contains floor(L / period) + 1
       // complete cycles.
       const cycles = Math.floor((ring.matches[period - 2] as number) / period) + 1;
-      if (cycles < this.repeats) continue;
+      if (cycles < minCycles) continue;
 
       const cycle = ring.sigs.slice(n - period);
       if (new Set(cycle).size < 2) continue; // all the same call: not an oscillation

@@ -42,7 +42,7 @@ describe('window: validation', () => {
     { name: 'maxRepeats above size', window: { size: 4, maxRepeats: 5 }, message: /window\.maxRepeats must be an integer from 2 to 4, got 5/ },
     { name: 'maxRepeats: NaN', window: { size: 10, maxRepeats: NaN }, message: /window\.maxRepeats/ },
     { name: 'maxRepeats missing', window: { size: 10 }, message: /window\.maxRepeats/ },
-    { name: 'a misspelt option', window: { size: 10, maxRepeats: 3, maxrepeats: 4 }, message: /unknown option "maxrepeats" \(known: size, maxRepeats\)/ },
+    { name: 'a misspelt option', window: { size: 10, maxRepeats: 3, maxrepeats: 4 }, message: /unknown option "maxrepeats" \(known: size, maxRepeats, warnAt\)/ },
     { name: 'a number', window: 5, message: /window must be an object with size and maxRepeats, or false/ },
     { name: 'null', window: null, message: /window must be an object/ },
     { name: 'an array', window: [10, 3], message: /window must be an object/ },

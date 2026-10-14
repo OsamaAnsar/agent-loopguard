@@ -70,13 +70,20 @@ interface Restore {
 function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard {
   const now = options.now ?? Date.now;
 
+  if (options.warnings !== undefined && typeof options.warnings !== 'boolean') {
+    throw new TypeError(`agent-loopguard: warnings must be a boolean, got ${String(options.warnings)}`);
+  }
+  // `warnings: false` silences every warning; `true` turns the loop-rule warnings on at their default level.
+  const warningsOff = options.warnings === false;
+  const warnByDefault = options.warnings === true;
+
   const policies = new ToolPolicies(options.tools);
   const maxSteps = options.maxSteps === false ? undefined : new MaxStepsDetector(options.maxSteps ?? DEFAULT_MAX_STEPS);
-  const repeated = options.repeatedToolCall === false ? undefined : new RepeatedToolCallDetector(options.repeatedToolCall, policies);
-  const oscillation = options.oscillation === false ? undefined : new OscillationDetector(options.oscillation);
-  const noProgress = options.noProgress === false ? undefined : new NoProgressDetector(options.noProgress);
+  const repeated = options.repeatedToolCall === false ? undefined : new RepeatedToolCallDetector(options.repeatedToolCall, policies, warnByDefault);
+  const oscillation = options.oscillation === false ? undefined : new OscillationDetector(options.oscillation, warnByDefault);
+  const noProgress = options.noProgress === false ? undefined : new NoProgressDetector(options.noProgress, warnByDefault);
   const finish = options.finishReason === false ? undefined : new FinishReasonDetector(options.finishReason);
-  const toolLimit = policies.capped.length > 0 ? new ToolLimitDetector(policies) : undefined;
+  const toolLimit = policies.capped.length > 0 ? new ToolLimitDetector(policies, warnByDefault) : undefined;
   const budget = options.budget === undefined || options.budget === false ? undefined : new BudgetDetector(options.budget, now);
 
   const customFns: readonly CustomDetector[] =
@@ -142,6 +149,8 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
       if (result.warnings !== undefined) warnings.push(...result.warnings);
     }
 
+    if (warningsOff) warnings.length = 0;
+
     let verdict: Verdict;
     if (stop !== undefined) {
       const full = withFeedback(stop);
@@ -159,16 +168,17 @@ function buildGuard(options: GuardOptions, restored: Restore | undefined): Guard
     const budgetNow = budget?.peek(totals);
 
     // Same priority as `check`, minus the rules that need a finished step.
+    const toolNow = toolLimit?.peek(scoped);
+    const repeatedNow = repeated?.peek(scoped, stepCount);
+    const oscillationNow = oscillation?.peek(scoped);
     const found: PreflightStopVerdict | undefined =
-      budgetNow?.stop ??
-      maxSteps?.peek() ??
-      toolLimit?.peek(scoped) ??
-      repeated?.peek(scoped, stepCount) ??
-      oscillation?.peek(scoped);
+      budgetNow?.stop ?? maxSteps?.peek() ?? toolNow?.stop ?? repeatedNow?.stop ?? oscillationNow?.stop;
 
     if (found === undefined) {
-      const warnings = budgetNow?.warnings;
-      return warnings === undefined ? { allow: true } : { allow: true, warnings };
+      const warnings: GuardWarning[] = warningsOff
+        ? []
+        : [...(budgetNow?.warnings ?? []), ...(toolNow?.warnings ?? []), ...(repeatedNow?.warnings ?? []), ...(oscillationNow?.warnings ?? [])];
+      return warnings.length === 0 ? { allow: true } : { allow: true, warnings };
     }
     const override = options.feedback?.(found, { phase: 'preflight' });
     const feedback = typeof override === 'string' ? override : feedbackFor(found, 'preflight');

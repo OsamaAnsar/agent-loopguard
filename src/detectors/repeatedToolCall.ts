@@ -15,6 +15,7 @@ import {
 } from '../snapshot';
 import type { ToolPolicies } from '../toolPolicy';
 import type {
+  GuardWarning,
   RepeatedToolCallEvidence,
   RepeatedToolCallOptions,
   RepeatedToolCallSnapshot,
@@ -23,9 +24,10 @@ import type {
   RepeatedToolCallWindowOptions,
   RepeatedToolCallWindowVerdict,
 } from '../types';
+import { repeatWarning, windowWarning } from '../warnings';
 import { CallWindow } from './callWindow';
-import type { Detector, DetectorResult } from './types';
-import { assertInteger, assertIntegerBetween } from './types';
+import type { Detector, DetectorResult, WarnRule } from './types';
+import { assertInteger, assertIntegerBetween, inWarnZone, resolveWarnAt } from './types';
 
 /** How many step indexes to keep in the evidence. */
 const MAX_STEP_INDEXES = 10;
@@ -54,6 +56,30 @@ interface Rule {
   identicalResults: boolean;
 }
 
+/** A call the window counted during one step, kept to judge it once the step is over. */
+interface Touched {
+  key: string;
+  call: CallRecord;
+  rule: Rule;
+}
+
+/** What one pass over a step's calls found. */
+interface Scan {
+  run: Run;
+  longest: number;
+  hit: RepeatedToolCallEvidence | undefined;
+  windowHit: RepeatedToolCallWindowEvidence | undefined;
+  /** Whether the step contained a call this detector counted. */
+  counted: boolean;
+  touched: Touched[];
+}
+
+/** What `peek` found: the stop the calls would cause, and the warnings they would carry. */
+export interface RepeatedToolCallPeek {
+  stop?: RepeatedToolCallVerdict | RepeatedToolCallWindowVerdict;
+  warnings: GuardWarning[];
+}
+
 function emptyRun(): Run {
   return { key: undefined, tool: '', preview: '', length: 0, steps: [], threshold: 0, identicalResults: false };
 }
@@ -65,8 +91,8 @@ function resolveWindow(raw: RepeatedToolCallWindowOptions | false | undefined): 
     throw new TypeError(`agent-loopguard: repeatedToolCall.window must be an object with size and maxRepeats, or false, got ${String(raw)}`);
   }
   for (const key of Object.keys(raw)) {
-    if (key !== 'size' && key !== 'maxRepeats') {
-      throw new TypeError(`agent-loopguard: repeatedToolCall.window has an unknown option "${key}" (known: size, maxRepeats)`);
+    if (key !== 'size' && key !== 'maxRepeats' && key !== 'warnAt') {
+      throw new TypeError(`agent-loopguard: repeatedToolCall.window has an unknown option "${key}" (known: size, maxRepeats, warnAt)`);
     }
   }
   const size = assertIntegerBetween('repeatedToolCall.window.size', raw.size, 2, MAX_WINDOW_SIZE);
@@ -86,6 +112,10 @@ function resolveWindow(raw: RepeatedToolCallWindowOptions | false | undefined): 
  * calls, however many other calls came in between. Both checks read the same calls (ignored tools
  * and, with `ignoreErrors`, failed calls are left out) and compare them the same way. The
  * consecutive check is reported first when both would stop.
+ *
+ * With early warnings on, a step that adds a counted call carries a warning when the run at its end,
+ * or a call it added to the window, is between `warnAt` (default: one short of the limit that applies
+ * to the tool, at least 2) and the limit.
  */
 export class RepeatedToolCallDetector implements Detector {
   readonly threshold: number;
@@ -96,61 +126,56 @@ export class RepeatedToolCallDetector implements Detector {
   private run: Run = emptyRun();
   private longest = 0;
   private readonly calls: CallWindow | undefined;
+  private readonly warn: WarnRule;
+  private readonly windowWarn: WarnRule;
 
   constructor(
     options: RepeatedToolCallOptions = {},
     private readonly policies?: ToolPolicies,
+    warnByDefault = false,
   ) {
     this.threshold = assertInteger('repeatedToolCall.threshold', options.threshold ?? 3, 2);
     this.requireIdenticalResults = options.requireIdenticalResults ?? false;
     this.ignoreErrors = options.ignoreErrors ?? false;
     this.window = resolveWindow(options.window);
     this.calls = this.window === undefined ? undefined : new CallWindow(this.window.size);
+    this.warn = resolveWarnAt('repeatedToolCall.warnAt', options.warnAt, warnByDefault, 2, this.threshold - 1);
+    const windowOptions = options.window === false ? undefined : options.window;
+    this.windowWarn =
+      this.window === undefined
+        ? resolveWarnAt('repeatedToolCall.window.warnAt', undefined, false, 2, 2)
+        : resolveWarnAt('repeatedToolCall.window.warnAt', windowOptions?.warnAt, warnByDefault, 2, this.window.maxRepeats - 1);
   }
 
   observe(record: StepRecord): DetectorResult | undefined {
-    let hit: RepeatedToolCallEvidence | undefined;
-    let windowHit: RepeatedToolCallWindowEvidence | undefined;
+    const scan = this.scan(this.run, this.longest, this.calls, record.calls, record.index, false);
+    this.run = scan.run;
+    this.longest = scan.longest;
 
-    for (const call of record.calls) {
-      if (this.ignoreErrors && call.failed) continue;
-      const rule = this.ruleFor(call.name, this.threshold);
-      const key = rule.identicalResults ? call.outcomeSig : call.callSig;
-      this.run = advance(this.run, key, call, record.index, rule);
-      if (this.run.length > this.longest) this.longest = this.run.length;
-      // Capture as soon as the threshold is reached: a later call in the same step may end the run.
-      if (this.run.length >= this.run.threshold) hit = evidenceOf(this.run);
-
-      if (this.calls !== undefined && this.window !== undefined) {
-        const windowRule = this.ruleFor(call.name, this.window.maxRepeats);
-        const count = this.calls.add(key);
-        if (count >= windowRule.threshold) windowHit = windowEvidenceOf(call, count, windowRule, this.window, this.calls.length);
-      }
-    }
-
-    if (hit !== undefined) {
-      const results = hit.identicalResults ? ' and identical results' : '';
-      return {
-        stop: {
-          stop: true,
-          reason: 'repeated-tool-call',
-          code: 'REPEATED_TOOL_CALL',
-          detail: `Tool "${hit.tool}" was called ${hit.count} times in a row with identical arguments${results}: ${hit.tool}(${hit.argsPreview}).`,
-          evidence: hit,
-        },
+    const result: DetectorResult = {};
+    if (scan.hit !== undefined) {
+      const results = scan.hit.identicalResults ? ' and identical results' : '';
+      result.stop = {
+        stop: true,
+        reason: 'repeated-tool-call',
+        code: 'REPEATED_TOOL_CALL',
+        detail: `Tool "${scan.hit.tool}" was called ${scan.hit.count} times in a row with identical arguments${results}: ${scan.hit.tool}(${scan.hit.argsPreview}).`,
+        evidence: scan.hit,
       };
-    }
-    if (windowHit === undefined) return undefined;
-    const results = windowHit.identicalResults ? ' and identical results' : '';
-    return {
-      stop: {
+    } else if (scan.windowHit !== undefined) {
+      const hit = scan.windowHit;
+      const results = hit.identicalResults ? ' and identical results' : '';
+      result.stop = {
         stop: true,
         reason: 'repeated-tool-call-window',
         code: 'REPEATED_TOOL_CALL_WINDOW',
-        detail: `Tool "${windowHit.tool}" was called ${windowHit.count} times with identical arguments${results} within the last ${windowHit.windowSize} calls: ${windowHit.tool}(${windowHit.argsPreview}).`,
-        evidence: windowHit,
-      },
-    };
+        detail: `Tool "${hit.tool}" was called ${hit.count} times with identical arguments${results} within the last ${hit.windowSize} calls: ${hit.tool}(${hit.argsPreview}).`,
+        evidence: hit,
+      };
+    }
+    const warnings = this.warningsOf(scan, this.calls);
+    if (warnings.length > 0) result.warnings = warnings;
+    return result.stop === undefined && result.warnings === undefined ? undefined : result;
   }
 
   /**
@@ -161,43 +186,107 @@ export class RepeatedToolCallDetector implements Detector {
    * tool) cannot be judged before the call runs, so such a call never trips it here; it counts as
    * a run of one, and as a call of its own in the window.
    */
-  peek(calls: readonly CallRecord[], stepIndex: number): RepeatedToolCallVerdict | RepeatedToolCallWindowVerdict | undefined {
-    let run: Run = { ...this.run, steps: [...this.run.steps] };
+  peek(calls: readonly CallRecord[], stepIndex: number): RepeatedToolCallPeek {
     const window = this.calls?.clone();
+    const scan = this.scan({ ...this.run, steps: [...this.run.steps] }, this.longest, window, calls, stepIndex, true);
+    const warnings = this.warningsOf(scan, window);
+
+    if (scan.hit !== undefined) {
+      const hit = scan.hit;
+      return {
+        stop: {
+          stop: true,
+          reason: 'repeated-tool-call',
+          code: 'REPEATED_TOOL_CALL',
+          detail: `Calling tool "${hit.tool}" now would be call ${hit.count} in a row with identical arguments (the limit is ${hit.threshold}): ${hit.tool}(${hit.argsPreview}).`,
+          evidence: hit,
+        },
+        warnings,
+      };
+    }
+    if (scan.windowHit !== undefined) {
+      const hit = scan.windowHit;
+      return {
+        stop: {
+          stop: true,
+          reason: 'repeated-tool-call-window',
+          code: 'REPEATED_TOOL_CALL_WINDOW',
+          detail: `Calling tool "${hit.tool}" now would be call ${hit.count} with identical arguments within the last ${hit.windowSize} calls (the limit is ${hit.threshold}): ${hit.tool}(${hit.argsPreview}).`,
+          evidence: hit,
+        },
+        warnings,
+      };
+    }
+    return { warnings };
+  }
+
+  /**
+   * Run `calls` through the run and the window. `run` may be updated in place and `window` is added to,
+   * so `peek` passes copies. For calls that have not run (`pending`) a result-aware call gets a key
+   * nothing else can match, because its outcome is unknown.
+   */
+  private scan(
+    run: Run,
+    longest: number,
+    window: CallWindow | undefined,
+    calls: readonly CallRecord[],
+    stepIndex: number,
+    pending: boolean,
+  ): Scan {
     let hit: RepeatedToolCallEvidence | undefined;
     let windowHit: RepeatedToolCallWindowEvidence | undefined;
+    const touched: Touched[] = [];
+    let counted = false;
 
     for (const [i, call] of calls.entries()) {
+      if (this.ignoreErrors && call.failed) continue;
+      counted = true;
       const rule = this.ruleFor(call.name, this.threshold);
-      // The outcome is unknown, so give a result-aware call a key nothing else can match.
-      const key = rule.identicalResults ? `pending#${i}` : call.callSig;
+      const key = rule.identicalResults ? (pending ? `pending#${i}` : call.outcomeSig) : call.callSig;
       run = advance(run, key, call, stepIndex, rule);
+      if (run.length > longest) longest = run.length;
+      // Capture as soon as the threshold is reached: a later call in the same step may end the run.
       if (run.length >= run.threshold) hit = evidenceOf(run);
 
       if (window !== undefined && this.window !== undefined) {
         const windowRule = this.ruleFor(call.name, this.window.maxRepeats);
         const count = window.add(key);
+        touched.push({ key, call, rule: windowRule });
         if (count >= windowRule.threshold) windowHit = windowEvidenceOf(call, count, windowRule, this.window, window.length);
       }
     }
+    return { run, longest, hit, windowHit, counted, touched };
+  }
 
-    if (hit !== undefined) {
-      return {
-        stop: true,
-        reason: 'repeated-tool-call',
-        code: 'REPEATED_TOOL_CALL',
-        detail: `Calling tool "${hit.tool}" now would be call ${hit.count} in a row with identical arguments (the limit is ${hit.threshold}): ${hit.tool}(${hit.argsPreview}).`,
-        evidence: hit,
-      };
+  /**
+   * The early warnings for a step that was just scanned: the run at its end, and the most repeated of
+   * the calls it added to the window. Nothing for a rule that stops in this step, or a step that
+   * counted no call.
+   */
+  private warningsOf(scan: Scan, window: CallWindow | undefined): GuardWarning[] {
+    const warnings: GuardWarning[] = [];
+    if (!scan.counted) return warnings;
+
+    const { run } = scan;
+    if (scan.hit === undefined && run.length > 0) {
+      const level = Math.max(2, this.warn.at ?? run.threshold - 1);
+      if (inWarnZone(this.warn, run.length, level, run.threshold)) warnings.push(repeatWarning(evidenceOf(run)));
     }
-    if (windowHit === undefined) return undefined;
-    return {
-      stop: true,
-      reason: 'repeated-tool-call-window',
-      code: 'REPEATED_TOOL_CALL_WINDOW',
-      detail: `Calling tool "${windowHit.tool}" now would be call ${windowHit.count} with identical arguments within the last ${windowHit.windowSize} calls (the limit is ${windowHit.threshold}): ${windowHit.tool}(${windowHit.argsPreview}).`,
-      evidence: windowHit,
-    };
+
+    if (scan.windowHit === undefined && window !== undefined && this.window !== undefined && this.windowWarn.enabled) {
+      let best: { count: number; touched: Touched } | undefined;
+      for (const touched of scan.touched) {
+        const count = window.count(touched.key);
+        const level = Math.max(2, this.windowWarn.at ?? touched.rule.threshold - 1);
+        if (inWarnZone(this.windowWarn, count, level, touched.rule.threshold) && (best === undefined || count > best.count)) {
+          best = { count, touched };
+        }
+      }
+      if (best !== undefined) {
+        warnings.push(windowWarning(windowEvidenceOf(best.touched.call, best.count, best.touched.rule, this.window, window.length)));
+      }
+    }
+    return warnings;
   }
 
   /**

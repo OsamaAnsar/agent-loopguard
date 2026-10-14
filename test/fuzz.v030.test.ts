@@ -18,6 +18,19 @@ const CONFIGS: Array<[string, () => GuardOptions]> = [
       tools: { search: { maxCalls: 6 }, read: { polling: { maxIdenticalResults: 3 } }, write: { ignore: true }, x: { repeatThreshold: 2 } },
     }),
   ],
+  [
+    'early warnings everywhere, with budgets',
+    () => ({
+      warnings: true,
+      repeatedToolCall: { threshold: 3, window: { size: 10, maxRepeats: 3 } },
+      oscillation: { repeats: 3 },
+      noProgress: { threshold: 3 },
+      budget: { maxTotalTokens: 5000, maxCostUsd: 1, maxDurationMs: 2000, warnAt: 0.5 },
+      tools: { search: { maxCalls: 6 }, x: { maxCalls: 2, warnAt: 1 }, write: { ignore: true } },
+      now: () => 0,
+    }),
+  ],
+  ['warnings explicitly off', () => ({ warnings: false, repeatedToolCall: { window: { size: 5, maxRepeats: 2 } }, oscillation: { warnAt: 2, repeats: 3 } })],
   ['the largest window', () => ({ maxSteps: false, repeatedToolCall: { window: { size: 1000, maxRepeats: 4 } } })],
 ];
 

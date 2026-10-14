@@ -13,9 +13,10 @@ import {
   fail,
   field,
 } from '../snapshot';
-import type { NoProgressOptions, NoProgressSnapshot } from '../types';
-import type { Detector, DetectorResult } from './types';
-import { assertInteger } from './types';
+import type { NoProgressEvidence, NoProgressOptions, NoProgressSnapshot } from '../types';
+import { noProgressWarning } from '../warnings';
+import type { Detector, DetectorResult, WarnRule } from './types';
+import { assertInteger, inWarnZone, resolveWarnAt } from './types';
 
 /**
  * How many distinct outcomes are remembered. The oldest is forgotten first, so in a run with more
@@ -35,6 +36,9 @@ const PREVIEW_LIMIT = 80;
  * is seen in the run. A step without tool calls is always stalled. Text is compared after
  * lower-casing and collapsing whitespace; an empty string counts as text, so tool-only steps
  * (which usually have no text) are judged on outcomes alone.
+ *
+ * With early warnings on, a stalled step carries a warning while the streak is between `warnAt`
+ * (default `threshold - 1`, at least 2) and the threshold.
  */
 export class NoProgressDetector implements Detector {
   readonly threshold: number;
@@ -45,9 +49,11 @@ export class NoProgressDetector implements Detector {
   private streakKey = '';
   /** Shortened text of the current streak, for messages. Empty exactly when the text is empty. */
   private streakPreview = '';
+  private readonly warn: WarnRule;
 
-  constructor(options: NoProgressOptions = {}) {
+  constructor(options: NoProgressOptions = {}, warnByDefault = false) {
     this.threshold = assertInteger('noProgress.threshold', options.threshold ?? 3, 2);
+    this.warn = resolveWarnAt('noProgress.warnAt', options.warnAt, warnByDefault, 2, this.threshold - 1);
   }
 
   observe(record: StepRecord): DetectorResult | undefined {
@@ -70,7 +76,11 @@ export class NoProgressDetector implements Detector {
       this.streakPreview = truncate(record.text, PREVIEW_LIMIT);
     }
 
-    if (this.streak < this.threshold) return undefined;
+    const evidence: NoProgressEvidence = { steps: this.streak, threshold: this.threshold, textPreview: this.streakPreview };
+    if (this.streak < this.threshold) {
+      const level = Math.max(2, this.warn.at ?? this.threshold - 1);
+      return inWarnZone(this.warn, this.streak, level, this.threshold) ? { warnings: [noProgressWarning(evidence)] } : undefined;
+    }
     const preview = this.streakPreview;
     return {
       stop: {
@@ -81,7 +91,7 @@ export class NoProgressDetector implements Detector {
           preview === ''
             ? `No progress: ${this.streak} consecutive steps produced no new tool results and no text.`
             : `No progress: ${this.streak} consecutive steps repeated the same text and produced no new tool results ("${preview}").`,
-        evidence: { steps: this.streak, threshold: this.threshold, textPreview: preview },
+        evidence,
       },
     };
   }

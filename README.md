@@ -159,6 +159,7 @@ const guard = createGuard({
 | `maxCalls` | An integer >= 0: the most calls to this tool in one run. `maxCalls: 3` allows three; the fourth stops the run with reason `tool-limit`, code `TOOL_CALL_CAP` (and `preflight` refuses it before it runs). `0` forbids the tool. |
 | `repeatThreshold` | An integer >= 2 replacing the global `repeatedToolCall.threshold` for this tool. |
 | `polling` | `true` (or `{ maxIdenticalResults?: number }`): identical arguments are legitimate while the results keep changing. The repeated-call rule applies to this tool only when the result is identical too, after `maxIdenticalResults` identical outcomes in a row (default: the tool's `repeatThreshold`, else the global threshold, so raise it for jobs that stay "pending" for a while). Calls without a result compare equal. |
+| `warnAt` | With early warnings: the number of calls (1 to `maxCalls`) at which the warning about the cap starts, or `false` for none. Needs `maxCalls`. See [Early warnings](#early-warnings). |
 | `ignore` | `true` leaves the tool out of repeat, oscillation and no-progress detection and out of `maxCalls`. Takes precedence over the other fields. |
 
 Tool names that are not listed follow the global options; names that are never called do no harm. An option the policy does not know (`maxcalls`, a typo) throws a `TypeError` from `createGuard`, so a misspelt cap cannot quietly do nothing. `repeatThreshold` and `polling` have no effect when `repeatedToolCall` is `false`; `maxCalls` and `ignore` still work.
@@ -182,6 +183,38 @@ The default `repeatedToolCall` rule only sees a call repeated back to back, so a
 - **The stop.** `reason: 'repeated-tool-call-window'`, `code: 'REPEATED_TOOL_CALL_WINDOW'`, evidence `{ tool, argsPreview, count, threshold, windowSize, windowCalls, identicalResults }`. It is a new reason rather than a new shape under `repeated-tool-call`, so code that narrows on `'repeated-tool-call'` keeps its types. It has `feedback` like every other fault.
 - **Preflight.** A call that would be the `maxRepeats`-th occurrence in the window is refused before it runs (the window slides as parallel calls are added). As for the consecutive rule, result-aware cases cannot be judged before the result exists, so `preflight` never refuses on them.
 - **Cost.** Memory is bounded by `size` (one 28-character hash per call) and each call costs O(1). A snapshot grows by about 31 bytes per slot: measured 30,690 extra bytes at `size: 1000` and about 300 at `size: 10`.
+
+### Early warnings
+
+```ts
+import { createGuard } from '@osama.ansar/agent-loopguard';
+
+const guard = createGuard({ warnings: true });
+
+const verdict = guard.check(step);
+if (!verdict.stop) {
+  for (const warning of verdict.warnings ?? []) {
+    messages.push({ role: 'user', content: warning.feedback }); // "...once more will stop this task..."
+  }
+}
+```
+
+A warning is a non-blocking note on a verdict (`{ stop: false, warnings: [...] }`, or next to a stop) raised one step before a rule would stop the run, so the model can change course while it still has room. Budgets have always had them (`budget.warnAt`); `warnings: true` adds them for the loop rules:
+
+| `code` | Raised when | Default level | Option |
+| --- | --- | --- | --- |
+| `REPEATED_TOOL_CALL_WARNING` | the run of identical calls is one short of the limit that applies to the tool | `threshold - 1` | `repeatedToolCall.warnAt` |
+| `REPEATED_TOOL_CALL_WINDOW_WARNING` | a call the step added is one short of `maxRepeats` in the window | `maxRepeats - 1` | `repeatedToolCall.window.warnAt` |
+| `OSCILLATION_WARNING` | the cycle at the end of the sequence has been seen one time short of `repeats` | `repeats - 1` | `oscillation.warnAt` |
+| `NO_PROGRESS_WARNING` | the stalled streak is one short of `threshold` | `threshold - 1` | `noProgress.warnAt` |
+| `TOOL_CALL_CAP_WARNING` | a capped tool has been called `maxCalls - 1` or `maxCalls` times (the next call over the cap stops) | `maxCalls - 1`, at least 1 | `tools.<name>.warnAt` |
+
+- **Default: off.** With default-on, 3 of the 682 assertions of 0.2.0 fail (they expect `preflight` to return exactly `{ allow: true }` on the call before a repeat is refused), and every verdict of code written against 0.2.0 could gain a `warnings` field it never saw. So `warnings: true` is opt-in. `warnings: false` is a kill switch for every warning, budget warnings included. A rule with its own `warnAt` number warns even without `warnings: true`; `warnAt: false` turns one rule off under `warnings: true`.
+- **Levels.** `warnAt` is the count at which a rule starts warning: an integer from 2 (from 1 for caps) up to one below its limit (up to `maxCalls` for caps). A rule that has no step before its stop (`threshold: 2`) never warns, and a `warnAt` that cannot be reached throws a `TypeError` from `createGuard`. The warning is raised on every step from that level until the rule stops, not just once.
+- **When.** A warning is raised on a step that adds to what it warns about: a counted call to that tool, a call that continues the cycle, one more stalled step. A text-only step after a warning carries none, and ignored tools never raise one.
+- **Shape.** `{ code, detail, feedback, evidence }`. `evidence` has the shape of the matching stop's, with the counts still below the limit. `detail` is for developers and shows an argument preview; `feedback` follows the same privacy rule as stop feedback (fixed words, counts and a safe tool name, never arguments, results or text). `feedbackForWarning(warning)` returns the model-facing text for any warning, budget warnings included (those have no `feedback` field, to keep their 0.2.0 shape).
+- **Preflight.** `guard.preflight(call)` returns the warnings the call would carry (`{ allow: true, warnings }`), in the same order as `check`, except `NO_PROGRESS_WARNING`, which needs a finished step.
+- **Snapshots.** Warnings are derived from state that is already in the snapshot, and `warnAt` never changes a stop, so it is not part of the options fingerprint: a run may be restored with different warning settings.
 
 ### Check a call before it runs
 
@@ -293,6 +326,8 @@ Steps are reduced to comparable facts once, when `check` is called. Anything unu
 
 **Call sequence.** "A call" is one entry of `toolCalls`. `repeatedToolCall` and `oscillation` read the flattened sequence of calls across steps, in order (calls of a tool with `ignore: true` are removed from it first, so they neither extend nor break a run). Parallel calls in one step count one by one; steps with no tool calls neither extend nor break a run. A call's signature is its tool name plus the canonical arguments. Its outcome signature adds the canonical result or error (or, if neither was supplied, is just the call).
 
+**Early warnings.** Computed after the detectors have seen a step, from the same state they stop on: the run, the window counts, the cycle counters, the streak and the tool counts. A rule that stops in the step does not also warn.
+
 **`maxSteps`.** Stops when `limit` steps have been recorded. With `maxSteps: 3` the third `check` stops.
 
 **`tools.<name>.maxCalls`.** Counts every call to the tool in the run (across steps, whatever the arguments or results) and stops on the first call beyond the cap: with `maxCalls: 3` the fourth call stops, with `maxCalls: 0` the first does. With parallel calls in one step, the first call over the cap is the one reported. Ignored tools are never counted. It keeps stopping on every later step that calls the tool, like the other rules.
@@ -321,17 +356,18 @@ Why the default exists: some frameworks only treat `stop` as "finished". If a pr
 interface GuardOptions {
   maxSteps?: number | false;                          // default 50
   repeatedToolCall?: {
-    threshold?: number; requireIdenticalResults?: boolean; ignoreErrors?: boolean;
-    window?: { size: number; maxRepeats: number } | false;   // size 2..1000, maxRepeats 2..size; default off
+    threshold?: number; requireIdenticalResults?: boolean; ignoreErrors?: boolean; warnAt?: number | false;
+    window?: { size: number; maxRepeats: number; warnAt?: number | false } | false;   // size 2..1000, maxRepeats 2..size; default off
   } | false;
-  oscillation?: { maxPeriod?: number; repeats?: number } | false;
-  noProgress?: { threshold?: number } | false;
+  oscillation?: { maxPeriod?: number; repeats?: number; warnAt?: number | false } | false;
+  noProgress?: { threshold?: number; warnAt?: number | false } | false;
   finishReason?: { terminal?: readonly string[]; otherPolicy?: 'stop' | 'continue' | 'stop-if-text-only' } | false;
   budget?: {
     maxTotalTokens?: BudgetLimit; maxInputTokens?: BudgetLimit; maxOutputTokens?: BudgetLimit;
     maxCostUsd?: BudgetLimit; maxDurationMs?: BudgetLimit;
     warnAt?: number;                                  // default warning ratio
   } | false;                                          // BudgetLimit = number | { limit: number; warnAt?: number }
+  warnings?: boolean;                                 // early warnings for the loop rules; default off, false silences all
   tools?: Record<string, ToolPolicy>;                 // per-tool rules, below
   custom?: CustomDetector | readonly CustomDetector[];
   feedback?: (verdict: StopVerdict, info: { phase: 'check' | 'preflight' }) => string | undefined;
@@ -341,6 +377,7 @@ interface GuardOptions {
 interface ToolPolicy {
   polling?: boolean | { maxIdenticalResults?: number };   // integer >= 2
   maxCalls?: number;                                      // integer >= 0
+  warnAt?: number | false;                                // 1..maxCalls; needs maxCalls
   repeatThreshold?: number;                               // integer >= 2
   ignore?: boolean;
 }
@@ -400,12 +437,13 @@ type StopReason = 'max-steps' | 'tool-limit' | 'repeated-tool-call' | 'repeated-
 | `budget` | `BUDGET_TOTAL_TOKENS`, `BUDGET_INPUT_TOKENS`, `BUDGET_OUTPUT_TOKENS`, `BUDGET_COST_USD`, `BUDGET_DURATION_MS` | `{ metric, value, limit }` |
 | `custom` | your `code` (default `CUSTOM`) | whatever you return |
 
-A warning is `{ code: 'BUDGET_WARNING', metric, value, limit, ratio, detail }`. `feedback` is present on every fault verdict from a built-in detector (see [Tell the model what went wrong](#tell-the-model-what-went-wrong)).
+A budget warning is `{ code: 'BUDGET_WARNING', metric, value, limit, ratio, detail }`; the loop warnings (see [Early warnings](#early-warnings)) are `{ code, detail, feedback, evidence }`. `GuardWarning` is the union of them, discriminated by `code`; `metric`, `value`, `limit` and `ratio` are typed `undefined` on the loop warnings so that code reading them compiles as before. `feedback` is present on every fault verdict from a built-in detector (see [Tell the model what went wrong](#tell-the-model-what-went-wrong)).
 
 ### Helpers
 
 - `explain(verdict): string`: readable text for logs, including a short hint and any warnings.
 - `isFault(verdict): verdict is StopVerdict`: true for a stop that is not just the model finishing normally with `stop`.
+- `feedbackForWarning(warning): string`: the model-facing text of any warning (the `feedback` of a loop warning, fixed wording for a budget warning).
 - `feedbackFor(verdict, phase?: 'check' | 'preflight'): string | undefined`: the default model-facing text for a verdict (what `verdict.feedback` holds unless you override it). `undefined` for a normal `stop` finish and for a custom verdict that brings no text.
 - `canonicalize(value): string` and `stableHash(value): string`: the comparison primitives, exported because they are useful on their own.
 - `restoreGuard(snapshot, options?, { allowLimitChanges? }?): Guard`: the same function as `createGuard.fromJSON`.
@@ -467,6 +505,7 @@ npm test                  # npm run test:coverage for coverage
 npm run build
 npm run example:loop
 npm run example:preflight # preflight, feedback, per-tool policies and save/resume, offline
+npm run example:warnings  # windowed repeats and early warnings, offline
 npm run example:ai-sdk    # Node >= 22 (needs the `ai` dev dependency)
 ```
 

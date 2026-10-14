@@ -225,7 +225,8 @@ export type StopVerdict =
   | BudgetVerdict
   | CustomVerdict;
 
-export interface GuardWarning {
+/** A budget has passed its `warnAt` ratio. Present whenever a budget limit has a `warnAt`. */
+export interface BudgetWarning {
   code: 'BUDGET_WARNING';
   metric: BudgetMetric;
   value: number;
@@ -233,7 +234,49 @@ export interface GuardWarning {
   /** `value / limit`. */
   ratio: number;
   detail: string;
+  /** A budget warning carries no model-facing text of its own; `feedbackForWarning` words one. Declared so that `warning.feedback` type-checks on any warning. */
+  feedback?: undefined;
 }
+
+/**
+ * Shape shared by the early warnings of the loop rules. The budget-only fields are declared as
+ * `undefined` so that, as in 0.2.0, `warning.metric` and `warning.value` type-check on any warning;
+ * narrow on `code` to read them as numbers.
+ */
+interface LoopWarningBase<C extends string, E> {
+  code: C;
+  /** One developer-facing sentence. May contain argument previews, like `StopVerdict.detail`. */
+  detail: string;
+  /** Text for the model. Same privacy rule as stop feedback: the tool name at most, never arguments or results. */
+  feedback: string;
+  /** The facts behind the warning, in the shape of the matching stop's evidence (`count` etc. are still below the threshold). */
+  evidence: E;
+  metric?: undefined;
+  value?: undefined;
+  limit?: undefined;
+  ratio?: undefined;
+}
+
+export type RepeatedToolCallWarning = LoopWarningBase<'REPEATED_TOOL_CALL_WARNING', RepeatedToolCallEvidence>;
+export type RepeatedToolCallWindowWarning = LoopWarningBase<
+  'REPEATED_TOOL_CALL_WINDOW_WARNING',
+  RepeatedToolCallWindowEvidence
+>;
+export type OscillationWarning = LoopWarningBase<'OSCILLATION_WARNING', OscillationEvidence>;
+export type NoProgressWarning = LoopWarningBase<'NO_PROGRESS_WARNING', NoProgressEvidence>;
+/** `evidence.calls` is the number of calls so far and is at most `evidence.limit`: the next call over it stops. */
+export type ToolLimitWarning = LoopWarningBase<'TOOL_CALL_CAP_WARNING', ToolLimitEvidence>;
+
+/** A non-blocking warning: a budget running low, or (with `warnings` on) a loop rule one step short of stopping. */
+export type GuardWarning =
+  | BudgetWarning
+  | RepeatedToolCallWarning
+  | RepeatedToolCallWindowWarning
+  | OscillationWarning
+  | NoProgressWarning
+  | ToolLimitWarning;
+
+export type WarningCode = GuardWarning['code'];
 
 export interface ContinueVerdict {
   stop: false;
@@ -256,6 +299,12 @@ export interface RepeatedToolCallWindowOptions {
   size: number;
   /** Stop when the same call occurs this many times in the window. Integer from 2 to `size`. */
   maxRepeats: number;
+  /**
+   * Early warning for this rule: the count at which it starts (integer from 2 to `maxRepeats - 1`),
+   * or `false` for none. Default: one short of the limit that applies to the tool, when warnings are
+   * on (see `GuardOptions.warnings`).
+   */
+  warnAt?: number | false;
 }
 
 export interface RepeatedToolCallOptions {
@@ -269,6 +318,12 @@ export interface RepeatedToolCallOptions {
   /** Drop failed calls (non-null `error`) from the sequence before counting. Default false. */
   ignoreErrors?: boolean;
   /**
+   * Early warning for the consecutive rule: the run length at which it starts (integer from 2 to
+   * `threshold - 1`), or `false` for none. Default: one short of the limit that applies to the tool,
+   * when warnings are on (see `GuardOptions.warnings`).
+   */
+  warnAt?: number | false;
+  /**
    * Also stop on repeats that are not consecutive. Off by default (and with `false`). The calls it
    * counts follow the same rules as the consecutive check: ignored tools and, with `ignoreErrors`,
    * failed calls are left out; `requireIdenticalResults` and `polling` tools compare results too.
@@ -281,11 +336,21 @@ export interface OscillationOptions {
   maxPeriod?: number;
   /** Stop when a cycle was seen this many times in a row. Integer >= 2. Default 3. */
   repeats?: number;
+  /**
+   * Early warning: the number of times in a row the cycle has been seen at which it starts (integer
+   * from 2 to `repeats - 1`), or `false` for none. Default: `repeats - 1`, when warnings are on.
+   */
+  warnAt?: number | false;
 }
 
 export interface NoProgressOptions {
   /** Consecutive stalled steps with identical text. Integer >= 2. Default 3. */
   threshold?: number;
+  /**
+   * Early warning: the streak length at which it starts (integer from 2 to `threshold - 1`), or
+   * `false` for none. Default: `threshold - 1`, when warnings are on.
+   */
+  warnAt?: number | false;
 }
 
 export type OtherFinishPolicy = 'stop' | 'continue' | 'stop-if-text-only';
@@ -356,6 +421,12 @@ export interface ToolPolicy {
   /** Stop after this many identical calls in a row to this tool. Integer >= 2. Overrides the global threshold. */
   repeatThreshold?: number;
   /**
+   * Early warning for `maxCalls`: the number of calls so far at which it starts (integer from 1 to
+   * `maxCalls`), or `false` for none. Default: `maxCalls - 1` (at least 1), when warnings are on. The
+   * warning lasts while the tool is called and the cap has not been passed; it needs `maxCalls`.
+   */
+  warnAt?: number | false;
+  /**
    * Leave the tool out of repeat, oscillation and no-progress detection and out of `maxCalls`
    * (for bookkeeping tools such as `think` or `todo`). Takes precedence over the other fields.
    */
@@ -366,6 +437,15 @@ export interface ToolPolicy {
 export type FeedbackPhase = 'check' | 'preflight';
 
 export interface GuardOptions {
+  /**
+   * Early warnings for the loop rules (repeated calls, windowed repeats, oscillation, no progress, tool
+   * caps): non-blocking `warnings` on a verdict one step before the rule would stop the run.
+   * `true` turns them on at one step short of each limit; `warnAt` on a rule sets its own level and
+   * turns that rule on by itself; `warnAt: false` turns one rule off. `false` silences every warning,
+   * budget warnings included. Default: off (nothing changes for code written against 0.2.0), except
+   * where a rule has an explicit `warnAt`; budget warnings are still governed by `budget.warnAt`.
+   */
+  warnings?: boolean;
   /** Stop after this many steps. Integer >= 1. Default 50. `false` disables. */
   maxSteps?: number | false;
   /** Default: enabled with default options. `false` disables. */
@@ -445,7 +525,7 @@ export interface PreflightCall {
 /** The call may go ahead (as far as the rules `preflight` can evaluate are concerned). */
 export interface PreflightAllow {
   allow: true;
-  /** Budget warnings that apply right now, if any. */
+  /** Warnings that apply right now, if any: budget warnings, and early warnings for the calls being asked about. */
   warnings?: GuardWarning[];
 }
 

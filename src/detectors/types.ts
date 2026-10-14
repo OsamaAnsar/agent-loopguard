@@ -40,3 +40,32 @@ export function assertIntegerBetween(name: string, value: unknown, min: number, 
   }
   return value;
 }
+
+/** When a rule starts to warn: `at` is the count at which the warning begins, `undefined` for one short of the stop. */
+export interface WarnRule {
+  readonly enabled: boolean;
+  readonly at: number | undefined;
+}
+
+/**
+ * Resolve a `warnAt` option. `undefined` follows `onByDefault` (the guard's `warnings` option); `false`
+ * turns the rule's warning off; a number turns it on at that count, which must be an integer from `min`
+ * to `max`. Throws a `TypeError` naming the option otherwise.
+ */
+export function resolveWarnAt(name: string, own: unknown, onByDefault: boolean, min: number, max: number): WarnRule {
+  if (own === undefined) return { enabled: onByDefault, at: undefined };
+  if (own === false) return { enabled: false, at: undefined };
+  if (typeof own !== 'number' || !Number.isInteger(own) || own < min || own > max) {
+    const range =
+      max < min
+        ? `omitted: the rule already stops at ${max + 1}, so there is no earlier step to warn at`
+        : `an integer from ${min} to ${max}`;
+    throw new TypeError(`agent-loopguard: ${name} must be false or ${range}, got ${String(own)}`);
+  }
+  return { enabled: true, at: own };
+}
+
+/** True when `count` has reached the level at which a rule warns but not yet the count at which it stops. */
+export function inWarnZone(rule: WarnRule, count: number, level: number, stopAt: number): boolean {
+  return rule.enabled && count >= level && count < stopAt;
+}
